@@ -9,28 +9,37 @@ Command line, interactive wizard and the run pipeline:
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import importlib.util
+import json
 import os
 import sys
 import time
 from typing import Callable, Optional
 
-from .config import VenturiConfig
+from .analysis.validation import print_report, to_dict, validate
+from .core.config import VenturiConfig
+from .core.fluids import FLUIDS, list_fluids
+from .core.propulsion import PropulsionCase
 from .export import export_all
-from .fluids import FLUIDS, list_fluids
-from .fvmesh import build_fvmesh
-from .geometry import create_venturi_geometry
-from .optimizer import run_optimization
+from .geometry import MorphedGeometry, create_venturi_geometry
+from .optimization.shape_opt import (DuctProblem, for_grid, initial_design, optimise,
+                                     report)
+from .optimization.sizing import run_optimization
 from .solver import solve_fv
-from .turbulence import SUPPORTED as TURBULENCE_MODELS
-from .validation import print_report, to_dict, validate
+from .solver.fvmesh import build_fvmesh
+from .solver.turbulence import SUPPORTED as TURBULENCE_MODELS
 
 RESULTS_DIR = "results"
+INPUT_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "input.py")
+REQUIRED_INPUTS = ("fluid", "V0", "p_amb", "dp_disk", "D_disk", "L_disk", "D_max", "L_max")
 
 EPILOG = """\
 examples:
-  python main.py --D 0.1 --beta 0.5 --fluid water_20C --p-inlet 101325 --p-throat 95000
-  python main.py --fluid custom --rho 1.2 --mu 1.8e-5 --p-inlet 200000 --p-throat 180000
-  python main.py --list-fluids
+  python run_venturi.py --D 0.1 --beta 0.5 --fluid water_20C --p-inlet 101325 --p-throat 95000
+  python run_venturi.py --fluid custom --rho 1.2 --mu 1.8e-5 --p-inlet 200000 --p-throat 180000
+  python run_venturi.py --list-fluids
+  python run_venturi.py --optimize                 shape for the largest thrust, from input.py
 
 run time (single CPU core):
   90 x 36 grid (default)   about 10 s
@@ -55,6 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     a = p.add_argument
 
     a("--list-fluids", action="store_true", help="Print the preset fluids and exit.")
+    a("--optimize", action="store_true",
+      help="Optimise the duct shape for the largest thrust, with the inputs of input.py.")
+    a("--input", default=INPUT_FILE, help="Input file of --optimize.")
     a("--fluid", default="water_20C", choices=list(FLUIDS) + ["custom"],
       help="Preset fluid (default: water_20C).")
     a("--rho", type=float, default=None, help="Density [kg/m3], needed with --fluid custom.")
@@ -175,11 +187,89 @@ def config_from_args(args) -> VenturiConfig:
         output_dir=args.output_dir or default_output_dir(args))
 
 
+def load_inputs(path: str) -> dict:
+    """The VENTURI dictionary of the input file."""
+    spec = importlib.util.spec_from_file_location("project_input", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    inputs = getattr(module, "VENTURI", None)
+    if inputs is None:
+        raise ValueError(f"{path} does not define the VENTURI dictionary.")
+    missing = [k for k in REQUIRED_INPUTS if inputs.get(k) is None]
+    if missing:
+        raise ValueError(f"Missing in {path}: {', '.join(missing)}.")
+    return inputs
+
+
+def load_case(path: str):
+    """The PropulsionCase of the input file, and the whole VENTURI dictionary."""
+    inputs = load_inputs(path)
+    fields = {f.name for f in dataclasses.fields(PropulsionCase) if f.init}
+    return PropulsionCase(**{k: v for k, v in inputs.items() if k in fields}), inputs
+
+
+def export_duct(problem: DuctProblem, design, out_dir: str, summary: dict) -> int:
+    """Write the usual output files for an optimised duct."""
+    case = problem.case
+    sol = problem.solve(design)
+    s = sol.system
+    F_ax, F_rad, p, Q = s.unpack(sol.x)
+    uz, ur = s.velocities(sol.x)
+    geom = problem.geometry(design)
+    config = VenturiConfig(
+        D=2.0 * geom.R_inlet, beta=min(geom.R_throat / geom.R_inlet, 0.999),
+        fluid=case.fluid, p_inlet=case.p_amb, p_throat_target=None,
+        v_inlet=Q / s.A_in, Nz=case.Nz, Nr=case.Nr, output_dir=out_dir)
+    geom = MorphedGeometry(problem.layout, design, config)
+    files = export_all(s.mesh, uz.copy(), ur.copy(), p * case.rho + case.p_amb, geom,
+                       config, summary)
+    return len(files)
+
+
+def run_shape_optimisation(args) -> int:
+    """Largest thrust: coarse grid first, then the finer ones from its result."""
+    try:
+        case, inputs = load_case(args.input)
+        layout, design = initial_design(case, inputs.get("n_up", 5), inputs.get("n_down", 8))
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
+
+    out_dir = args.output_dir or os.path.join(RESULTS_DIR, "duct_" + case.fluid)
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"Jet speed without losses {case.V_jet_ideal:.2f} m/s, "
+          f"{layout.n_vars} design variables")
+
+    problem = None
+    for Nz, Nr in inputs.get("grids", [(64, 26), (90, 36)]):
+        print(f"\nGrid {Nz} x {Nr}")
+        problem = DuctProblem(for_grid(case, Nz, Nr), layout)
+        res = optimise(problem, design, max_iter=inputs.get("max_iter", 40),
+                       log=os.path.join(out_dir, f"history_{Nz}x{Nr}.json"))
+        design = res.design
+        print(f"  thrust {res.thrust_start:.4f} -> {res.thrust:.4f} N ({res.message})")
+
+    summary = report(problem, design)
+    print("\nFinal duct")
+    for key, value in summary.items():
+        print(f"  {key:20s} {value:.6g}")
+    with open(os.path.join(out_dir, "design.json"), "w", encoding="utf-8") as fh:
+        json.dump(dict(design=design.tolist(), R_disk=layout.R_disk,
+                       L_section=layout.L_section, n_up=layout.n_up,
+                       n_down=layout.n_down, summary=summary), fh, indent=1)
+    if not args.no_export:
+        n = export_duct(problem, design, out_dir, summary)
+        print(f"\n{n} files in {out_dir}{os.sep}")
+    return 0
+
+
 def run(args) -> int:
     if args.list_fluids:
         print(list_fluids())
         print("\nOwn fluid: --fluid custom --rho <value> --mu <value> [--p-vap <value>]")
         return 0
+    if args.optimize:
+        return run_shape_optimisation(args)
 
     print("\n[1/6] Sizing from the inputs")
     try:

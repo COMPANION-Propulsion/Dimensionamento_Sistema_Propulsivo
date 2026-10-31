@@ -1,6 +1,6 @@
 """
-optimizer.py
-============
+sizing.py
+=========
 Quick choice of beta and of the diverging angle for a wanted flow rate and
 pressure drop, BEFORE running the CFD.
 

@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .fvmesh import divergence
+from ..solver.fvmesh import divergence
 
 # Acceptance thresholds
 TOL_MASS_PCT = 0.1        # inlet/outlet flow rate mismatch [%]

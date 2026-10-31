@@ -29,14 +29,19 @@ reported as such.
 
 Usage
 -----
-    python -m venturi.grid_study                         # default case
-    python -m venturi.grid_study --beta 0.6 --jobs 2     # any main.py option
-    python -m venturi.grid_study --levels 90x36,128x51,180x72
+    python -m venturi_designer.analysis.grid_study                         # default case
+    python -m venturi_designer.analysis.grid_study --beta 0.6 --jobs 2     # any run_venturi.py option
+    python -m venturi_designer.analysis.grid_study --levels 90x36,128x51,180x72
+    python -m venturi_designer.analysis.grid_study --duct results/duct_air_20C/design.json
+
+With --duct the study runs on an optimised duct and the result under test is
+the thrust instead of C_d. The conditions come from input.py (see --input).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -115,10 +120,10 @@ def parse_levels(text: str) -> List[Tuple[int, int]]:
 
 def run_level(args_dict: Dict, Nz: int, Nr: int, ramp: float) -> Dict:
     """Solve one grid level and return the numbers of interest."""
-    from .cli import config_from_args
-    from .fvmesh import build_fvmesh
-    from .geometry import create_venturi_geometry
-    from .solver import solve_fv
+    from ..cli import config_from_args
+    from ..solver.fvmesh import build_fvmesh
+    from ..geometry import create_venturi_geometry
+    from ..solver import solve_fv
     from .validation import validate
 
     args = argparse.Namespace(**args_dict)
@@ -137,15 +142,17 @@ def run_level(args_dict: Dict, Nz: int, Nr: int, ramp: float) -> Dict:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    from .cli import build_parser as case_parser
+    from ..cli import build_parser as case_parser
     p = case_parser()
-    p.prog = "python -m venturi.grid_study"
+    p.prog = "python -m venturi_designer.analysis.grid_study"
     p.description = ("Solve one case on several grids and estimate how far the "
                      "finest result still is from the grid-independent value.")
     p.add_argument("--levels", default=DEFAULT_LEVELS,
                    help=f"grids as NzxNr, comma separated (default {DEFAULT_LEVELS}).")
     p.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1),
                    help="grids solved at the same time (default: up to 4).")
+    p.add_argument("--duct", default=None,
+                   help="design.json of an optimised duct: study its thrust instead of C_d.")
     p.set_defaults(tol=DEFAULT_TOL, max_iter=400_000)
     return p
 
@@ -167,18 +174,77 @@ def _notes(triplet: List[Dict]) -> str:
     return "; ".join(out) if out else "ok"
 
 
+def run_duct_level(input_file: str, design_file: str, Nz: int, Nr: int) -> Dict:
+    """Solve an optimised duct on one grid and return its thrust."""
+    import numpy as np
+    from ..cli import load_case
+    from ..geometry import MorphLayout
+    from ..optimization.shape_opt import DuctProblem, for_grid, report
+    from ..solver.turbulence import wall_y_plus
+
+    with open(design_file, encoding="utf-8") as fh:
+        data = json.load(fh)
+    layout = MorphLayout(data["R_disk"], data["L_section"], data["n_up"], data["n_down"])
+    case, _ = load_case(input_file)
+    problem = DuctProblem(for_grid(case, Nz, Nr), layout)
+    design = np.array(data["design"])
+    t0 = time.time()
+    sol = problem.solve(design)
+    summary = report(problem, design)
+    uz, ur = sol.system.velocities(sol.x)
+    return dict(Nz=Nz, Nr=Nr, cells=Nz * Nr, converged=bool(sol.converged),
+                residual=float(sol.residual), time_s=time.time() - t0,
+                thrust=summary["thrust"], thrust_from_forces=summary["thrust_from_forces"],
+                y_plus=float(wall_y_plus(uz, ur, sol.system.mesh, case.nu).max()))
+
+
+def duct_study(args, levels: List[Tuple[int, int]]) -> int:
+    """Grid study of the thrust of an optimised duct."""
+    out_dir = os.path.dirname(os.path.abspath(args.duct))
+    print(f"Thrust grid study: {', '.join(f'{nz}x{nr}' for nz, nr in levels)}, "
+          f"{args.jobs} at a time.", flush=True)
+    with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        futures = [pool.submit(run_duct_level, args.input, args.duct, nz, nr)
+                   for nz, nr in levels]
+        rows = [f.result() for f in as_completed(futures)]
+
+    rows.sort(key=lambda r: -r["cells"])          # finest first
+    h = [r["cells"] ** -0.5 for r in rows]
+    lines = ["# Thrust grid study", "",
+             "| grid | cells | h / h_finest | converged | y+ | thrust [N] | from forces [N] |",
+             "|---|---|---|---|---|---|---|"]
+    for r, hi in zip(rows, h):
+        lines.append(f"| {r['Nz']} x {r['Nr']} | {r['cells']} | {hi / h[0]:.3f} | "
+                     f"{'yes' if r['converged'] else 'NO'} | {r['y_plus']:.2f} | "
+                     f"{r['thrust']:.5f} | {r['thrust_from_forces']:.5f} |")
+    lines += ["", "| grids (fine, middle, coarse) | observed order p | extrapolated thrust "
+              "| GCI on the finest thrust | notes |", "|---|---|---|---|---|"]
+    for k in range(len(rows) - 2):
+        g = gci(h[k:k + 3], [rows[k + i]["thrust"] for i in range(3)])
+        name = ", ".join(f"{rows[k + i]['Nz']}x{rows[k + i]['Nr']}" for i in range(3))
+        lines.append(_fmt_gci(name, g, _notes(rows[k:k + 3])))
+    text = "\n".join(lines) + "\n"
+    with open(os.path.join(out_dir, "grid_study.md"), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print("\n" + text)
+    print(f"Written to {out_dir}{os.sep}")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     levels = parse_levels(args.levels)
     if len(levels) < 3:
         print("Error: at least three grids are needed.")
         return 1
+    if args.duct:
+        return duct_study(args, levels)
 
     # Same ramp width on every grid: taken from the coarsest one, which
     # needs the widest ramp to keep its cells within 20 % of each other.
-    from .cli import config_from_args
-    from .fvmesh import throat_ramp_width
-    from .geometry import create_venturi_geometry
+    from ..cli import config_from_args
+    from ..solver.fvmesh import throat_ramp_width
+    from ..geometry import create_venturi_geometry
     a0 = argparse.Namespace(**vars(args))
     a0.Nz, a0.Nr = levels[0]
     cfg0 = config_from_args(a0)

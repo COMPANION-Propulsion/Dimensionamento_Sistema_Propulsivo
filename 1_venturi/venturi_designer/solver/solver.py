@@ -66,9 +66,9 @@ from typing import List
 
 import numpy as np
 
-from ..fvmesh import FVMesh, divergence
-from ..projection import Projector
-from ..turbulence import compute_nu_t, wall_y_plus
+from .fvmesh import FVMesh, divergence
+from .projection import Projector
+from .turbulence import compute_nu_t, wall_y_plus
 from .kernels import (reconstruct, explicit_rhs, radial_explicit,
                       cell_timesteps, face_timesteps, predict_fluxes,
                       max_change, max_rate, any_above)
@@ -93,6 +93,7 @@ class FVResult:
     mass_error_pct: float = 0.0
     y_plus_max: float = 0.0
     wall_time_s: float = 0.0
+    p_outlet: float = 0.0       # pressure of the outlet face [Pa]
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +134,7 @@ def inlet_profile(mesh: FVMesh, Re_D: float, Q_target: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 def solve_fv(mesh: FVMesh, config, verbose: bool = True,
              turb_every: int = 5, turb_relax: float = 0.3,
-             dt_every: int = 500) -> FVResult:
+             dt_every: int = 500, body_force=None) -> FVResult:
     """Solve the steady field on the given domain.
 
     Args:
@@ -146,6 +147,8 @@ def solve_fv(mesh: FVMesh, config, verbose: bool = True,
         dt_every: with the local time step, how often (in iterations) the
             time step of each cell is recomputed and the pressure matrix
             refactored.
+        body_force: optional (Nz, Nr) axial acceleration [m/s^2] added to
+            every cell, used for the actuator disk (see propulsion.py).
 
     Time step (config.time_step):
         "global": every cell uses the smallest stable step of the grid.
@@ -273,6 +276,8 @@ def solve_fv(mesh: FVMesh, config, verbose: bool = True,
 
         radial_explicit(uz, ur, az_e, ar_e, nu_eff, nu_lam, c_rad,
                         cw1, cw2, mesh.vol, mesh.r_c, az, ar)
+        if body_force is not None:
+            np.add(az, body_force, out=az)
 
         predict_fluxes(F_ax, F_rad, az, ar, mesh.A_ax,
                        mesh.Cr_rad, mesh.Cz_rad, dt_ax, dt_rad)
@@ -320,7 +325,8 @@ def solve_fv(mesh: FVMesh, config, verbose: bool = True,
     else:
         p = (rho / dt) * phi if dt > 0.0 else np.zeros((Nz, Nr))
     p_in_mean = float(np.sum(p[0, :] * mesh.A_ax[0, :]) / mesh.A_ax[0, :].sum())
-    p = p + (float(config.p_inlet) - p_in_mean)
+    p_outlet = float(config.p_inlet) - p_in_mean
+    p = p + p_outlet
 
     # --- diagnostics --------------------------------------------------------
     div = divergence(F_ax, F_rad, mesh)
@@ -337,4 +343,5 @@ def solve_fv(mesh: FVMesh, config, verbose: bool = True,
         mass_error_pct=mass_err,
         y_plus_max=float(yp.max()),
         wall_time_s=time.time() - t0,
+        p_outlet=p_outlet,
     )

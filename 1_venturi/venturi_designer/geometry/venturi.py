@@ -1,6 +1,6 @@
 """
-geometry.py
-===========
+venturi.py
+==========
 Wall profile R(z) of the Venturi tube.
 
 The profile is made of five pieces, from left to right:
@@ -23,7 +23,7 @@ from typing import List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
-from .config import VenturiConfig
+from ..core.config import VenturiConfig
 
 # One arc: (z_start, z_end, z_centre, r_centre, radius, sign)
 # sign = +1: the arc bulges outwards (centre below the wall)

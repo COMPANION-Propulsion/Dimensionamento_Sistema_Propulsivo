@@ -45,8 +45,19 @@ def reconstruct(F_ax, F_rad, A_ax, Cr, Cz, uz, ur):
 
 
 @njit(inline="always")
-def _tvd(phi_far, phi_up, phi_down):
-    """Face value from the van Leer limiter."""
+def _tvd(phi_far, phi_up, phi_down, eps2):
+    """Face value from the van Leer limiter.
+
+    eps2 > 0 selects the van Albada limiter instead, with eps2 the square of
+    a velocity below which differences count as noise. Van Leer has a corner
+    where the difference changes sign, and in nearly uniform flow many cells
+    sit on that corner, so it has no usable derivative there. Van Albada is
+    smooth, and the Newton solver and the adjoint need that.
+    """
+    if eps2 > 0.0:
+        a = phi_up - phi_far
+        b = phi_down - phi_up
+        return phi_up + 0.5 * ((a * a + eps2) * b + (b * b + eps2) * a) / (a * a + b * b + 2.0 * eps2)
     d = phi_down - phi_up
     if abs(d) < 1e-30:
         return phi_up
@@ -57,7 +68,7 @@ def _tvd(phi_far, phi_up, phi_down):
 
 @njit(cache=True, fastmath=True)
 def explicit_rhs(uz, ur, F_ax, F_rad, nu_eff,
-                  c_ax, c_rad, c_in, vol, uz_in, az, ar):
+                  c_ax, c_rad, c_in, vol, uz_in, az, ar, eps2=0.0):
     """Explicit part of the accelerations: convection + axial diffusion.
 
     Radial diffusion, the wall term and the axisymmetric source are handled
@@ -88,11 +99,11 @@ def explicit_rhs(uz, ur, F_ax, F_rad, nu_eff,
         for i in range(1, Nz):
             F = F_ax[i, j]
             if F > 0.0:
-                fz = _tvd(uz[max(i - 2, 0), j], uz[i - 1, j], uz[i, j])
-                fr = _tvd(ur[max(i - 2, 0), j], ur[i - 1, j], ur[i, j])
+                fz = _tvd(uz[max(i - 2, 0), j], uz[i - 1, j], uz[i, j], eps2)
+                fr = _tvd(ur[max(i - 2, 0), j], ur[i - 1, j], ur[i, j], eps2)
             else:
-                fz = _tvd(uz[min(i + 1, Nz - 1), j], uz[i, j], uz[i - 1, j])
-                fr = _tvd(ur[min(i + 1, Nz - 1), j], ur[i, j], ur[i - 1, j])
+                fz = _tvd(uz[min(i + 1, Nz - 1), j], uz[i, j], uz[i - 1, j], eps2)
+                fr = _tvd(ur[min(i + 1, Nz - 1), j], ur[i, j], ur[i - 1, j], eps2)
             # convection: leaving cell i-1, entering cell i
             az[i - 1, j] -= F * fz
             ar[i - 1, j] -= F * fr
@@ -118,11 +129,11 @@ def explicit_rhs(uz, ur, F_ax, F_rad, nu_eff,
         for j in range(1, Nr):
             F = F_rad[i, j]
             if F > 0.0:
-                fz = _tvd(uz[i, max(j - 2, 0)], uz[i, j - 1], uz[i, j])
-                fr = _tvd(ur[i, max(j - 2, 0)], ur[i, j - 1], ur[i, j])
+                fz = _tvd(uz[i, max(j - 2, 0)], uz[i, j - 1], uz[i, j], eps2)
+                fr = _tvd(ur[i, max(j - 2, 0)], ur[i, j - 1], ur[i, j], eps2)
             else:
-                fz = _tvd(uz[i, min(j + 1, Nr - 1)], uz[i, j], uz[i, j - 1])
-                fr = _tvd(ur[i, min(j + 1, Nr - 1)], ur[i, j], ur[i, j - 1])
+                fz = _tvd(uz[i, min(j + 1, Nr - 1)], uz[i, j], uz[i, j - 1], eps2)
+                fr = _tvd(ur[i, min(j + 1, Nr - 1)], ur[i, j], ur[i, j - 1], eps2)
             az[i, j - 1] -= F * fz
             ar[i, j - 1] -= F * fr
             az[i, j] += F * fz
