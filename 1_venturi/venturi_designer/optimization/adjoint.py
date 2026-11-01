@@ -83,7 +83,9 @@ W_RAD = 5       # reach of the stencil along the radius, in cells
 FD_STEP = 1e-7  # step on the scaled unknowns
 KAPPA_FLUX = 0.1    # strength of the flux dissipation
 EPS_LIMITER = 1e-3  # velocity differences below this fraction of U are noise
-FD_STATE = 1e-6  # step of df/dU on the scaled unknowns
+FD_STATE = 1e-7  # step of df/dU on the scaled unknowns
+RELAX_KEEP = 3   # updates of nu_t at full strength
+RELAX_DECAY = 0.7  # then each update is this much smaller
 MAX_STEP = 0.2  # largest change of a scaled unknown in one Newton step
 
 _COLOURINGS: Dict[Tuple[int, int], tuple] = {}
@@ -309,11 +311,11 @@ class DuctSystem:
 class FlowSolution:
     x: np.ndarray
     nu_t: np.ndarray
-    converged: bool
+    converged: bool              # Newton reached its tolerance
+    settled: bool                # the thrust stopped moving with nu_t
     residual: float
     newton_steps: int
     system: DuctSystem
-    lu: Optional[object] = None
 
 
 def solve_newton(sys_: DuctSystem, x: np.ndarray, tol: float = 1e-9, max_steps: int = 80,
@@ -377,14 +379,27 @@ def time_march_start(mesh: FVMesh, case: PropulsionCase, sys_: DuctSystem, Q: fl
 def solve_flow(sys_: DuctSystem, x: np.ndarray, nu_t: np.ndarray, relax: float = 0.5,
                outer: int = 30, tol_T: float = 1e-5, sigma0: float = 100.0,
                verbose: bool = False) -> FlowSolution:
-    """Newton at frozen nu_t, updating nu_t between Newton solves."""
+    """Newton at frozen nu_t, updating nu_t between Newton solves.
+
+    The algebraic model does not settle on its own. Where the switch between
+    its inner and outer layer sits on the edge, a cell flips from one to the
+    other and back at every update, and the thrust keeps alternating between
+    two values. It works like a relay, so the update is made smaller and
+    smaller after the first few passes: the cell then comes to rest at the
+    switching value, which moves continuously with the shape.
+
+    The returned nu_t is the one the returned state was solved with.
+    """
     case, mesh = sys_.case, sys_.mesh
     T_old = None
-    ok, norm, steps = False, float("inf"), 0
-    for k in range(1 if case.turbulence_model == "laminar" else outer):
-        sys_.set_nu_t(nu_t)
+    ok, settled, norm, steps = False, False, float("inf"), 0
+    used = nu_t
+    laminar = case.turbulence_model == "laminar"
+    for k in range(1 if laminar else outer):
+        used = nu_t
+        sys_.set_nu_t(used)
         # after the first pass the state is close, so the steps can start larger
-        x, norm, s, ok = solve_newton(sys_, x, sigma0=sigma0 if k == 0 else min(sigma0, 1.0),
+        x, norm, s, ok = solve_newton(sys_, x, sigma0=sigma0 if k == 0 else min(sigma0, 0.1),
                                       verbose=verbose)
         steps += s
         T = thrust(sys_, x)
@@ -392,14 +407,15 @@ def solve_flow(sys_: DuctSystem, x: np.ndarray, nu_t: np.ndarray, relax: float =
             print(f"  outer {k:2d}: T = {T:.6f} N, Newton {'ok' if ok else 'FAILED'}", flush=True)
         if not ok:
             break
-        if T_old is not None and abs(T - T_old) < tol_T * abs(T):
+        if laminar or (T_old is not None and abs(T - T_old) < tol_T * abs(T)):
+            settled = True
             break
         T_old = T
         uz, ur = sys_.velocities(x)
-        nu_t = (1.0 - relax) * nu_t + relax * compute_nu_t(uz, ur, mesh, case.nu,
-                                                           case.turbulence_model)
-    return FlowSolution(x=x, nu_t=nu_t, converged=ok, residual=norm, newton_steps=steps,
-                        system=sys_)
+        r = relax * RELAX_DECAY ** max(0, k - RELAX_KEEP)
+        nu_t = (1.0 - r) * used + r * compute_nu_t(uz, ur, mesh, case.nu, case.turbulence_model)
+    return FlowSolution(x=x, nu_t=used, converged=ok, settled=settled, residual=norm,
+                        newton_steps=steps, system=sys_)
 
 
 def thrust(sys_: DuctSystem, x: np.ndarray) -> float:
@@ -448,12 +464,13 @@ def adjoint_gradients(sol: FlowSolution, functions: Dict[str, Callable],
 
     lambdas = {}
     for name, f in functions.items():
-        f0 = f(base, x)
         df = np.zeros(base.n)
         trial = x.copy()
-        for k in range(base.n):
+        for k in range(base.n):     # central: a sharp KS bends within one step
             trial[k] = x[k] + FD_STATE
-            df[k] = (f(base, trial) - f0) / FD_STATE
+            up = f(base, trial)
+            trial[k] = x[k] - FD_STATE
+            df[k] = (up - f(base, trial)) / (2.0 * FD_STATE)
             trial[k] = x[k]
         lambdas[name] = lu.solve(df, trans="T")
 

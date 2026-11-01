@@ -180,7 +180,7 @@ class DuctProblem:
             x, nu_t = time_march_start(s.mesh, self.case, s, Q0)
             sol = solve_flow(s, x, nu_t, verbose=self.verbose)
         else:
-            sol = solve_flow(s, self.sol.x, self.sol.nu_t, relax=0.7, outer=6, sigma0=5.0,
+            sol = solve_flow(s, self.sol.x, self.sol.nu_t, outer=16, sigma0=5.0,
                              verbose=self.verbose)
             if not sol.converged:
                 sol = solve_flow(s, self.sol.x, self.sol.nu_t, sigma0=200.0,

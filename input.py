@@ -21,6 +21,7 @@ VENTURI = {
     "turbulence_model": "baldwin_lomax",
     "n_up": 5,                 # free control points of the intake
     "n_down": 8,               # free control points of the diffuser
-    "grids": [(64, 26), (90, 36)],   # solved in this order
+    "grid": "medium",          # "coarse", "medium" or "fine", see GRID_LEVELS
+    "jobs": 3,                 # grids solved at the same time in the final check
     "max_iter": 40,            # optimiser iterations per grid
 }

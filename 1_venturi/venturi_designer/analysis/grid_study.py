@@ -51,6 +51,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_LEVELS = "64x26,90x36,128x51"
+P_RANGE = (0.5, 3.0)      # plausible observed order of a second-order scheme
+ASYMPTOTIC_TOL = 0.15     # allowed distance of the asymptotic ratio from 1
 DEFAULT_TOL = 1e-4   # tighter than a normal run, so the iteration error is
                      # small next to the grid error being measured
 
@@ -169,9 +171,42 @@ def _notes(triplet: List[Dict]) -> str:
     for r in triplet:
         if not r["converged"]:
             out.append(f"{r['Nz']}x{r['Nr']} not converged")
+        if not r.get("settled", True):
+            out.append(f"{r['Nz']}x{r['Nr']} thrust still moving with nu_t")
         if r["y_plus"] >= 5.0:
             out.append(f"{r['Nz']}x{r['Nr']} y+ = {r['y_plus']:.1f} (> 5)")
     return "; ".join(out) if out else "ok"
+
+
+def error_estimate(h: Sequence[float], phi: Sequence[float], safety: float = 1.25) -> Dict:
+    """Value of the finest of three grids, with its grid error [same units].
+
+    h and phi are finest first. Normally the error is the GCI. If the result
+    goes up and down, the GCI means nothing, and the band falls back on the
+    spread of the three results. The asymptotic ratio should be close to 1:
+    far from it, the grids are not yet fine enough for Richardson to hold.
+    """
+    g = gci(h, phi, safety)
+    f1, f2, f3 = phi
+    problems: List[str] = []
+    if g.oscillatory:
+        error = safety * (max(phi) - min(phi))
+        ratio = float("nan")
+        problems.append("the result goes up and down with the grid")
+    else:
+        error = g.gci21 * abs(f1)
+        ratio = 1.0
+        if g.gci21 > 0.0:
+            r21, r32 = h[1] / h[0], h[2] / h[1]
+            gci32 = safety * abs((f2 - f3) / f2) / (r32 ** g.p - 1.0)
+            ratio = gci32 / (r21 ** g.p * g.gci21)
+        if not P_RANGE[0] <= g.p <= P_RANGE[1]:
+            problems.append(f"observed order {g.p:.2f} outside {P_RANGE[0]}..{P_RANGE[1]}")
+        if abs(ratio - 1.0) > ASYMPTOTIC_TOL:
+            problems.append(f"not in the asymptotic range (ratio {ratio:.3f})")
+    return dict(value=f1, extrapolated=f1 if g.oscillatory else g.phi_ext, error=error,
+                error_pct=100.0 * error / abs(f1), order=g.p, asymptotic_ratio=ratio,
+                problems=problems)
 
 
 def run_duct_level(input_file: str, design_file: str, Nz: int, Nr: int) -> Dict:
@@ -193,18 +228,23 @@ def run_duct_level(input_file: str, design_file: str, Nz: int, Nr: int) -> Dict:
     summary = report(problem, design)
     uz, ur = sol.system.velocities(sol.x)
     return dict(Nz=Nz, Nr=Nr, cells=Nz * Nr, converged=bool(sol.converged),
-                residual=float(sol.residual), time_s=time.time() - t0,
-                thrust=summary["thrust"], thrust_from_forces=summary["thrust_from_forces"],
+                settled=bool(sol.settled), residual=float(sol.residual),
+                time_s=time.time() - t0, thrust=summary["thrust"], thrust_from_forces=summary["thrust_from_forces"],
                 y_plus=float(wall_y_plus(uz, ur, sol.system.mesh, case.nu).max()))
 
 
-def duct_study(args, levels: List[Tuple[int, int]]) -> int:
-    """Grid study of the thrust of an optimised duct."""
-    out_dir = os.path.dirname(os.path.abspath(args.duct))
+def duct_study(input_file: str, design_file: str, levels: Sequence[Tuple[int, int]],
+               jobs: int) -> Dict:
+    """Grid study of the thrust of an optimised duct.
+
+    Returns the estimate on the finest three grids: value, extrapolated
+    value, error band, and the reasons not to trust it, if any.
+    """
+    out_dir = os.path.dirname(os.path.abspath(design_file))
     print(f"Thrust grid study: {', '.join(f'{nz}x{nr}' for nz, nr in levels)}, "
-          f"{args.jobs} at a time.", flush=True)
-    with ProcessPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futures = [pool.submit(run_duct_level, args.input, args.duct, nz, nr)
+          f"{jobs} at a time.", flush=True)
+    with ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
+        futures = [pool.submit(run_duct_level, input_file, design_file, nz, nr)
                    for nz, nr in levels]
         rows = [f.result() for f in as_completed(futures)]
 
@@ -223,12 +263,24 @@ def duct_study(args, levels: List[Tuple[int, int]]) -> int:
         g = gci(h[k:k + 3], [rows[k + i]["thrust"] for i in range(3)])
         name = ", ".join(f"{rows[k + i]['Nz']}x{rows[k + i]['Nr']}" for i in range(3))
         lines.append(_fmt_gci(name, g, _notes(rows[k:k + 3])))
+
+    estimate = error_estimate(h[:3], [r["thrust"] for r in rows[:3]])
+    notes = _notes(rows[:3])
+    if notes != "ok":
+        estimate["problems"].append(notes)
+    estimate.update(reliable=not estimate["problems"],
+                    grids=[f"{r['Nz']}x{r['Nr']}" for r in rows[:3]])
+    lines += ["", f"Thrust: {estimate['value']:.4f} +/- {estimate['error']:.4f} N "
+              f"({estimate['error_pct']:.2f} %), extrapolated {estimate['extrapolated']:.4f} N, "
+              + ("reliable." if estimate["reliable"]
+                 else "NOT reliable: " + "; ".join(estimate["problems"]) + ".")]
     text = "\n".join(lines) + "\n"
     with open(os.path.join(out_dir, "grid_study.md"), "w", encoding="utf-8") as fh:
         fh.write(text)
+    with open(os.path.join(out_dir, "thrust_estimate.json"), "w", encoding="utf-8") as fh:
+        json.dump(dict(estimate=estimate, grids=rows), fh, indent=1)
     print("\n" + text)
-    print(f"Written to {out_dir}{os.sep}")
-    return 0
+    return estimate
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -238,7 +290,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Error: at least three grids are needed.")
         return 1
     if args.duct:
-        return duct_study(args, levels)
+        duct_study(args.input, args.duct, levels, args.jobs)
+        return 0
 
     # Same ramp width on every grid: taken from the coarsest one, which
     # needs the widest ramp to keep its cells within 20 % of each other.

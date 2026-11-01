@@ -37,6 +37,16 @@ from .config import GAMMA_AIR, R_AIR
 from .fluids import FLUIDS
 from ..solver.fvmesh import FVMesh
 
+# Grid choice of input.py. "optimise" lists the grids of the shape optimisation,
+# coarse first. "verify" lists the three grids, a factor sqrt(2) apart, that
+# solve the final shape: the last one gives the value, all three its error.
+GRID_LEVELS = {
+    "coarse": dict(optimise=[(64, 26)], verify=[(64, 26), (90, 36), (128, 51)]),
+    "medium": dict(optimise=[(64, 26), (90, 36)], verify=[(90, 36), (128, 51), (180, 72)]),
+    "fine": dict(optimise=[(64, 26), (90, 36), (128, 51)],
+                 verify=[(128, 51), (180, 72), (256, 102)]),
+}
+
 
 @dataclass
 class PropulsionCase:
@@ -54,7 +64,7 @@ class PropulsionCase:
     turbulence_model: str = "baldwin_lomax"
     Nz: int = 64
     Nr: int = 26
-    wall_clustering: float = 2.7
+    wall_clustering: float = 3.5     # keeps y+ below 5 on every grid level
     throat_refine: float = 3.0
 
     rho: float = field(init=False)

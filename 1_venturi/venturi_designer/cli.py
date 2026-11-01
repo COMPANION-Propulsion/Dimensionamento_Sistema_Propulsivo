@@ -17,10 +17,11 @@ import sys
 import time
 from typing import Callable, Optional
 
+from .analysis.grid_study import duct_study
 from .analysis.validation import print_report, to_dict, validate
 from .core.config import VenturiConfig
 from .core.fluids import FLUIDS, list_fluids
-from .core.propulsion import PropulsionCase
+from .core.propulsion import GRID_LEVELS, PropulsionCase
 from .export import export_all
 from .geometry import MorphedGeometry, create_venturi_geometry
 from .optimization.shape_opt import (DuctProblem, for_grid, initial_design, optimise,
@@ -32,7 +33,8 @@ from .solver.turbulence import SUPPORTED as TURBULENCE_MODELS
 
 RESULTS_DIR = "results"
 INPUT_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "input.py")
-REQUIRED_INPUTS = ("fluid", "V0", "p_amb", "dp_disk", "D_disk", "L_disk", "D_max", "L_max")
+REQUIRED_INPUTS = ("fluid", "V0", "p_amb", "dp_disk", "D_disk", "L_disk", "D_max", "L_max",
+                   "grid")
 
 EPILOG = """\
 examples:
@@ -198,6 +200,8 @@ def load_inputs(path: str) -> dict:
     missing = [k for k in REQUIRED_INPUTS if inputs.get(k) is None]
     if missing:
         raise ValueError(f"Missing in {path}: {', '.join(missing)}.")
+    if inputs["grid"] not in GRID_LEVELS:
+        raise ValueError(f"grid must be one of {', '.join(GRID_LEVELS)}, got '{inputs['grid']}'.")
     return inputs
 
 
@@ -241,7 +245,8 @@ def run_shape_optimisation(args) -> int:
           f"{layout.n_vars} design variables")
 
     problem = None
-    for Nz, Nr in inputs.get("grids", [(64, 26), (90, 36)]):
+    level = GRID_LEVELS[inputs["grid"]]
+    for Nz, Nr in level["optimise"]:
         print(f"\nGrid {Nz} x {Nr}")
         problem = DuctProblem(for_grid(case, Nz, Nr), layout)
         res = optimise(problem, design, max_iter=inputs.get("max_iter", 40),
@@ -253,13 +258,20 @@ def run_shape_optimisation(args) -> int:
     print("\nFinal duct")
     for key, value in summary.items():
         print(f"  {key:20s} {value:.6g}")
-    with open(os.path.join(out_dir, "design.json"), "w", encoding="utf-8") as fh:
+    design_file = os.path.join(out_dir, "design.json")
+    with open(design_file, "w", encoding="utf-8") as fh:
         json.dump(dict(design=design.tolist(), R_disk=layout.R_disk,
                        L_section=layout.L_section, n_up=layout.n_up,
                        n_down=layout.n_down, summary=summary), fh, indent=1)
     if not args.no_export:
         n = export_duct(problem, design, out_dir, summary)
         print(f"\n{n} files in {out_dir}{os.sep}")
+
+    print(f"\nGrid convergence, level '{inputs['grid']}'")
+    est = duct_study(args.input, design_file, level["verify"], inputs.get("jobs", 3))
+    print(f"Thrust = {est['value']:.4f} +/- {est['error']:.4f} N ({est['error_pct']:.2f} %)")
+    if not est["reliable"]:
+        print("WARNING, value not reliable: " + "; ".join(est["problems"]))
     return 0
 
 
