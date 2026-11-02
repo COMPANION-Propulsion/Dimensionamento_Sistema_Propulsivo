@@ -1,0 +1,29 @@
+﻿profile,blades,accepted,energy_J,iterations,reason
+NACA0012,2,False,5748.29341670744,47,Vincolo violato nella verifica a 64 anelli
+NACA0012,3,False,5932.983140869137,51,Vincolo violato nella verifica a 64 anelli
+NACA0012,4,False,6035.772873173986,60,Vincolo violato nella verifica a 64 anelli
+NACA0012,5,False,,80,"Iteration limit reached; Re=4996.67 fuori [5000, 150000]"
+NACA0012,6,False,6381.904601736324,80,Iteration limit reached
+NACA0012,7,False,,,Nessun seme ammissibile trovato; fattibilita non determinata
+NACA0012,8,False,,,Nessun seme ammissibile trovato; fattibilita non determinata
+NACA2412,2,False,5888.682126739895,80,Iteration limit reached
+NACA2412,3,True,6261.6085007241345,31,
+NACA2412,4,True,6577.6374025066,36,
+NACA2412,5,False,,44,"Inequality constraints incompatible; Re=4985.9 fuori [5000, 150000]"
+NACA2412,6,True,7055.712887510495,22,
+NACA2412,7,True,7319.196624127269,18,
+NACA2412,8,False,,,Nessun seme ammissibile trovato; fattibilita non determinata
+NACA4412,2,True,6693.778495277784,29,
+NACA4412,3,True,7060.798040984194,70,
+NACA4412,4,True,7320.809095516885,75,
+NACA4412,5,False,,80,"Iteration limit reached; Re=4958.3 fuori [5000, 150000]"
+NACA4412,6,True,7885.101603657752,52,
+NACA4412,7,False,,80,"Iteration limit reached; Re=4991.73 fuori [5000, 150000]"
+NACA4412,8,False,,,Nessun seme ammissibile trovato; fattibilita non determinata
+NACA4415,2,False,,59,"alpha=24.027 fuori [-12, 24]"
+NACA4415,3,True,7898.364478761325,29,
+NACA4415,4,False,,80,"Iteration limit reached; alpha=25.3491 fuori [-12, 24]"
+NACA4415,5,False,7716.445679349792,52,Inequality constraints incompatible; Vincolo violato nella verifica a 64 anelli
+NACA4415,6,False,,29,"Inequality constraints incompatible; alpha=24.0018 fuori [-12, 24]"
+NACA4415,7,False,9809.525783401808,80,Iteration limit reached; Vincolo violato nella verifica a 64 anelli
+NACA4415,8,False,,,Nessun seme ammissibile trovato; fattibilita non determinata

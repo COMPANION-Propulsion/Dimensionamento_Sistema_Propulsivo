@@ -1,0 +1,45 @@
+{
+  "status": "dimostrativo_non_validato",
+  "description": "Caso numerico iniziale per sviluppare il prototipo. Sostituire i valori con requisiti reali prima di usare i risultati per progettazione.",
+  "reference_note": "La spinta 0.6 N è solo un ordine di grandezza ispirato al requisito pubblicato per un asse del sistema Astrobee; l'architettura qui è un rotore assiale intubato distinta da Astrobee.",
+  "air": {
+    "model": "dry_air_ideal_gas_temperature_dependent_properties",
+    "temperature_K": 295.15,
+    "static_pressure_Pa": 101325.0,
+    "relative_humidity": null
+  },
+  "rotor": {
+    "outer_diameter_m": 0.10,
+    "hub_diameter_bounds_m": [0.02, 0.04],
+    "blade_count_candidates": [2, 3, 4, 5, 6, 7, 8],
+    "airfoil_candidates": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
+    "profile_constant_along_span": true,
+    "shaft_speed_bounds_rpm": [5000.0, 30000.0]
+  },
+  "operating_points": [
+    {
+      "name": "static",
+      "minimum_rotor_thrust_N": 0.6,
+      "axial_inlet_velocity_m_s": 0.0,
+      "duration_s": 600.0
+    },
+    {
+      "name": "slow_forward_flight",
+      "minimum_rotor_thrust_N": 0.6,
+      "axial_inlet_velocity_m_s": 0.5,
+      "duration_s": 600.0
+    }
+  ],
+  "optimization": {
+    "objective": "minimize_sum_shaft_power_times_duration",
+    "optimizer": "SLSQP",
+    "gradient_method_initial": "finite_difference",
+    "adjoint": "future_option_after_model_and_solver_are_selected"
+  },
+  "limitations": [
+    "Values other than the approximate thrust scale are illustrative assumptions, not measured Astrobee data.",
+    "No duct geometry is supplied; predicted thrust is rotor-model thrust and does not quantify net duct force.",
+    "Airfoil polars are not yet supplied; optimization cannot be treated as validated until suitable polars are added.",
+    "The example does not establish that the requested thrust is feasible within the assumed diameter and speed bounds."
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "catalog_version": "0.2",
+  "purpose": "Profili iniziali per prototipo BEMT; candidati esplorativi, non selezione aerodinamica validata per la ventola.",
+  "coordinate_source": "https://m-selig.ae.illinois.edu/ads/coord_database.html",
+  "polar_policy": "Tabelle numeriche NeuralFoil/AeroSandbox dalle coordinate analitiche locali, con fit Kulfan documentato. Interpolazione in alpha, log(Re), Mach, senza estrapolazione; confidence minima 0.5 come screening, non validazione sperimentale.",
+  "profiles": [
+    {
+      "id": "NACA0012",
+      "family": "NACA 4-digit",
+      "geometry": "analytic_naca4",
+      "max_camber_fraction": 0.0,
+      "max_camber_location_fraction": null,
+      "thickness_fraction": 0.12,
+      "uiuc_coordinate_file": "naca0012.dat",
+      "coordinate_url": "https://m-selig.ae.illinois.edu/ads/coord/naca0012.dat",
+      "polar_status": "numerical_generated_not_experimentally_validated",
+      "polar_file": "polars_neuralfoil/NACA0012.json",
+      "candidate_role": "profilo simmetrico di riferimento"
+    },
+    {
+      "id": "NACA2412",
+      "family": "NACA 4-digit",
+      "geometry": "analytic_naca4",
+      "max_camber_fraction": 0.02,
+      "max_camber_location_fraction": 0.4,
+      "thickness_fraction": 0.12,
+      "uiuc_coordinate_file": "naca2412.dat",
+      "coordinate_url": "https://m-selig.ae.illinois.edu/ads/coord/naca2412.dat",
+      "polar_status": "numerical_generated_not_experimentally_validated",
+      "polar_file": "polars_neuralfoil/NACA2412.json",
+      "candidate_role": "profilo camberato di riferimento"
+    },
+    {
+      "id": "NACA4412",
+      "family": "NACA 4-digit",
+      "geometry": "analytic_naca4",
+      "max_camber_fraction": 0.04,
+      "max_camber_location_fraction": 0.4,
+      "thickness_fraction": 0.12,
+      "uiuc_coordinate_file": "naca4412.dat",
+      "coordinate_url": "https://m-selig.ae.illinois.edu/ads/coord/naca4412.dat",
+      "polar_status": "numerical_generated_not_experimentally_validated",
+      "polar_file": "polars_neuralfoil/NACA4412.json",
+      "candidate_role": "profilo camberato di riferimento"
+    },
+    {
+      "id": "NACA4415",
+      "family": "NACA 4-digit",
+      "geometry": "analytic_naca4",
+      "max_camber_fraction": 0.04,
+      "max_camber_location_fraction": 0.4,
+      "thickness_fraction": 0.15,
+      "uiuc_coordinate_file": "naca4415.dat",
+      "coordinate_url": "https://m-selig.ae.illinois.edu/ads/coord/naca4415.dat",
+      "polar_status": "numerical_generated_not_experimentally_validated",
+      "polar_file": "polars_neuralfoil/NACA4415.json",
+      "candidate_role": "candidato piu spesso per confronto esplorativo"
+    }
+  ],
+  "polar_generation": {
+    "tool": "NeuralFoil via AeroSandbox",
+    "official_project_url": "https://github.com/peterdsharpe/NeuralFoil",
+    "stored_coefficients": ["cl", "cd", "confidence"],
+    "required_conditions": ["reynolds_number", "mach_number", "transition_or_roughness_assumption"],
+    "status": "numerical_tables_generated"
+  }
+}
