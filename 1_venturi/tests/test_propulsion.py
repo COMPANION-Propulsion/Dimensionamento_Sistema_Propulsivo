@@ -13,8 +13,8 @@ from venturi_designer.solver.fvmesh import build_fvmesh
 
 
 def test_disk_force_integrates_to_the_pressure_rise():
-    lay = MorphLayout(R_disk=0.05, L_section=0.04)
-    d = np.r_[np.full(lay.n_up, 0.06), np.full(lay.n_down, 0.06), 0.1, 0.3]
+    lay = MorphLayout(L_section=0.04)
+    d = np.r_[np.full(lay.n_up, 0.06), np.full(lay.n_down, 0.06), 0.05, 0.1, 0.3]
     g = MorphedGeometry(lay, d)
     m = build_fvmesh(g, 64, 26, 2.7, 3.0, throat_ramp=1.5)
     rho, dp = 1.2, 1000.0
@@ -24,8 +24,8 @@ def test_disk_force_integrates_to_the_pressure_rise():
 
 
 def test_disk_outside_the_grid_is_refused():
-    lay = MorphLayout(R_disk=0.05, L_section=0.04)
-    d = np.r_[np.full(lay.n_up, 0.06), np.full(lay.n_down, 0.06), 0.1, 0.3]
+    lay = MorphLayout(L_section=0.04)
+    d = np.r_[np.full(lay.n_up, 0.06), np.full(lay.n_down, 0.06), 0.05, 0.1, 0.3]
     m = build_fvmesh(MorphedGeometry(lay, d), 20, 10, 2.7, 1.0)
     with pytest.raises(ValueError):
         disk_force(m, 5.0, 6.0, 100.0, 1.2)

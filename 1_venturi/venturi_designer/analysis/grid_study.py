@@ -53,6 +53,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 DEFAULT_LEVELS = "64x26,90x36,128x51"
 P_RANGE = (0.5, 3.0)      # plausible observed order of a second-order scheme
 ASYMPTOTIC_TOL = 0.15     # allowed distance of the asymptotic ratio from 1
+FLAT_TOL = 5e-4           # results closer than this (relative) are grid independent
 DEFAULT_TOL = 1e-4   # tighter than a normal run, so the iteration error is
                      # small next to the grid error being measured
 
@@ -189,6 +190,13 @@ def error_estimate(h: Sequence[float], phi: Sequence[float], safety: float = 1.2
     g = gci(h, phi, safety)
     f1, f2, f3 = phi
     problems: List[str] = []
+    spread = max(phi) - min(phi)
+    if spread <= FLAT_TOL * abs(f1):
+        # the differences are at the level of the iteration error: the order
+        # means nothing, and the spread itself is the band
+        return dict(value=f1, extrapolated=f1, error=safety * spread,
+                    error_pct=100.0 * safety * spread / abs(f1), order=float("nan"),
+                    asymptotic_ratio=float("nan"), problems=problems)
     if g.oscillatory:
         error = safety * (max(phi) - min(phi))
         ratio = float("nan")

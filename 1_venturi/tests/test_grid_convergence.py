@@ -32,6 +32,12 @@ def test_oscillating_result_is_flagged_and_keeps_a_band():
     assert est["error"] == pytest.approx(1.25 * 0.3)
 
 
+def test_flat_result_is_grid_independent():
+    est = error_estimate([1.0, 1.4, 2.0], [0.19993, 0.19993, 0.19998])
+    assert est["problems"] == []
+    assert est["error"] == pytest.approx(1.25 * 5e-5)
+
+
 def test_grid_too_coarse_for_richardson_is_flagged():
     assert error_estimate([1.0, 1.4, 2.0], [10.0, 10.01, 11.0])["problems"]
 

@@ -61,6 +61,7 @@ DISK_START = 0.8       # starting disk radius / R_int_max
 INLET_START = 1.2      # starting inlet radius / disk radius
 START_SPLIT = 0.3      # share of the free length given to the starting intake
 START_SLOPE = 0.6      # steepest starting wall / steepest wall allowed
+START_FLOW = (0.85, 0.6, 0.45, 1.0)  # flow-rate guesses of a cold start / ideal one
 
 
 def ks_min(values: np.ndarray, rho: float = KS_RHO) -> float:
@@ -159,11 +160,13 @@ def initial_design(case: PropulsionCase, n_up: int = 5, n_down: int = 8):
 class DuctProblem:
     """Thrust and constraints of a shape, with their adjoint gradients."""
 
-    def __init__(self, case: PropulsionCase, layout: MorphLayout, verbose: bool = False):
+    def __init__(self, case: PropulsionCase, layout: MorphLayout, verbose: bool = False,
+                 Re_ref: Optional[float] = None):
         self.case = case
         self.layout = layout
         self.verbose = verbose
-        self.Re_ref = case.V_jet_ideal * 2.0 * case.R_int_max / case.nu
+        # Reynolds number of the inlet profile, fixed for the whole optimisation
+        self.Re_ref = Re_ref or case.V_jet_ideal * 2.0 * case.R_int_max / case.nu
         self.sol: Optional[FlowSolution] = None
         self._key = None
         self._foreign = False        # self.sol comes from another dp
@@ -197,10 +200,7 @@ class DuctProblem:
             return self.sol
         s = self.system(d)
         if self.sol is None:
-            g = self.geometry(d)
-            Q0 = 0.85 * math.pi * g.R_exit ** 2 * self.case.V_jet_ideal
-            x, nu_t = time_march_start(s.mesh, self.case, s, Q0)
-            sol = solve_flow(s, x, nu_t, verbose=self.verbose)
+            sol = self._cold(s, d)
         else:
             sol = solve_flow(s, self.sol.x, self.sol.nu_t, outer=16, sigma0=5.0,
                              verbose=self.verbose)
@@ -208,13 +208,25 @@ class DuctProblem:
                 sol = solve_flow(s, self.sol.x, self.sol.nu_t, sigma0=200.0,
                                  verbose=self.verbose)
             if not sol.converged:     # too far from the last flow: start afresh
-                g = self.geometry(d)
-                Q0 = 0.85 * math.pi * g.R_exit ** 2 * self.case.V_jet_ideal
-                x, nu_t = time_march_start(s.mesh, self.case, s, Q0)
-                sol = solve_flow(s, x, nu_t, verbose=self.verbose)
+                sol = self._cold(s, d)
         if sol.converged:
             self.sol, self._key, self._foreign = sol, key, False
             self._grads = {}
+        return sol
+
+    def _cold(self, s: DuctSystem, d: np.ndarray) -> FlowSolution:
+        """Flow from nothing: time marching at a guessed flow rate, then Newton.
+
+        The time-marching start holds its inlet flow rate fixed, and from a
+        guess too far off Newton may not converge: the next guess is tried then.
+        """
+        g = self.geometry(d)
+        Q_ideal = math.pi * g.R_exit ** 2 * self.case.V_jet_ideal
+        for k in START_FLOW:
+            x, nu_t = time_march_start(s.mesh, self.case, s, k * Q_ideal)
+            sol = solve_flow(s, x, nu_t, verbose=self.verbose)
+            if sol.converged:
+                break
         return sol
 
     def warm_start(self, sol: FlowSolution) -> None:
@@ -327,7 +339,8 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
                    D_exit=2 * g.R_exit,
                    geometric_min=float(problem.geometric(d).min()), **vals)
         history.append(row)
-        feasible = (row["geometric_min"] > -1e-3
+        row["converged"] = bool(problem.solve(d).converged)
+        feasible = (row["converged"] and row["geometric_min"] > -1e-3
                     and all(margin(n, vals) > -1e-3 for n in flow_names))
         if feasible and vals["thrust"] > best["T"]:
             best.update(d=d.copy(), T=vals["thrust"])

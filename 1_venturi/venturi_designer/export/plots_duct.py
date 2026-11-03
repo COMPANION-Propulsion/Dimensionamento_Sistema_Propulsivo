@@ -80,8 +80,12 @@ def plot_geometry(F: Dict, tube: np.ndarray, design: np.ndarray, layout, path: s
 def plot_map(F: Dict, key: str, label: str, title: str, path: str,
              arrows: bool = False, scale: float = 1.0) -> str:
     c, geom = F["cells"], F["geom"]
-    z, r, v = c["z"] * MM, c["r"] * MM, c[key] * scale
-    fig, ax = plt.subplots(figsize=(13, 5))
+    # a row on the axis with the values of the first cells, so the two halves meet
+    z = np.column_stack((c["z"][:, :1], c["z"])) * MM
+    r = np.column_stack((np.zeros(len(c["r"])), c["r"])) * MM
+    v = np.column_stack((c[key][:, :1], c[key])) * scale
+    aspect = geom.L_total / (2.0 * geom.R_inlet)
+    fig, ax = plt.subplots(figsize=(float(np.clip(4.2 * aspect + 3.0, 7.0, 15.0)), 5.5))
     lev = np.linspace(v.min(), v.max(), LEVELS + 1) if np.ptp(v) > 0 else LEVELS
     for s in (1, -1):
         cs = ax.contourf(z, s * r, v, levels=lev, cmap=CMAP)
@@ -99,7 +103,8 @@ def plot_map(F: Dict, key: str, label: str, title: str, path: str,
         j = np.unique(np.linspace(1, nr - 2, 7).astype(int))
         I, J = np.ix_(i, j)
         sp = np.maximum(c["V"][I, J], 1e-12)
-        ax.quiver(z[I, J], r[I, J], c["uz"][I, J] / sp, c["ur"][I, J] / sp, angles="xy",
+        ax.quiver(c["z"][I, J] * MM, c["r"][I, J] * MM, c["uz"][I, J] / sp, c["ur"][I, J] / sp,
+                  angles="xy",
                   color="k", width=0.0015, scale=60, pivot="mid")
     ax.set_aspect("equal")
     ax.set_xlabel("z [mm]")

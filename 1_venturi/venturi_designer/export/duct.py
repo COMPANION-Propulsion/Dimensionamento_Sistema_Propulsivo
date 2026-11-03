@@ -17,6 +17,7 @@ import glob
 import json
 import math
 import os
+import shutil
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -35,9 +36,12 @@ OUTPUT_DIRS = dict(sintesi="00_sintesi", grafici="01_grafici", excel="02_excel",
 ENVELOPE_TOL_MM = 1e-3
 
 
-def output_dirs(root: str) -> Dict[str, str]:
+def output_dirs(root: str, clean: bool = True) -> Dict[str, str]:
+    """The output folders under root, emptied first so no file of an older run stays."""
     dirs = {k: os.path.join(root, v) for k, v in OUTPUT_DIRS.items()}
     for d in dirs.values():
+        if clean and os.path.isdir(d):
+            shutil.rmtree(d)
         os.makedirs(d, exist_ok=True)
     return dirs
 
@@ -171,8 +175,11 @@ def write_report(results: Dict, path: str) -> str:
         "- `04_cfd/`: campi per ParaView (2D e 3D) e nuvola di punti",
         "- `05_convergenza/`: `design.json`, storie SLSQP, ciclo su Δp, studio di griglia", "",
         "Nota: la spinta è quella interna netta; la resistenza esterna della gondola non è "
-        "calcolata. Con Δp fisso la spinta ideale vale 2·Δp·A_uscita, quindi l'ottimo tende a "
-        "uscite larghe: il vincolo di separazione nel diffusore è ciò che lo limita.", "",
+        "calcolata. Con disco ideale la spinta statica vale 2·Δp·A_uscita: a spinta data il Δp "
+        "minimo chiede l'uscita più larga possibile. Con diametro e posizione della ventola "
+        "liberi, l'ottimo tende quindi a un condotto dritto al diametro interno massimo, corto "
+        "quanto i limiti permettono (meno attrito); i limiti di lunghezza minima e le perdite "
+        "reali della ventola (mozzo, gioco di estremità) non sono nel modello.", "",
     ]
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))

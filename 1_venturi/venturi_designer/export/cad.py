@@ -78,8 +78,10 @@ def bell_envelope(R_inlet: float, wall: float) -> Tuple[float, float]:
     """
     Rb = bell_radius(2.0 * R_inlet, wall)
     a = math.radians(BELL_SWEEP_DEG)
-    r_max = R_inlet + Rb * (1.0 - math.cos(a)) + 0.5 * wall * (math.cos(a) + math.sin(a))
-    upstream = Rb * math.sin(a) - 0.5 * wall * (math.sin(a) - math.cos(a))
+    # the inlet lip is a half circle of radius t/2 around the middle of the
+    # bell end, (Rb - t/2) from the bell centre: its top and front stick out t/2
+    r_max = R_inlet + Rb * (1.0 - math.cos(a)) + 0.5 * wall * (1.0 + math.cos(a))
+    upstream = (Rb - 0.5 * wall) * math.sin(a) + 0.5 * wall
     return r_max, upstream + 0.5 * wall
 
 

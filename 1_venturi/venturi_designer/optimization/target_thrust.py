@@ -38,6 +38,7 @@ from ..geometry.morph import MorphedGeometry, MorphLayout
 THRUST_TOL = 1e-3      # relative thrust error the secant stops at
 MAX_SECANT = 8         # secant steps at one shape
 DP_RANGE = (0.2, 5.0)  # largest change of dp in one secant step, as a factor
+EXP_RANGE = (0.5, 2.0) # exponents of T ~ dp^k believed from two points
 
 
 @dataclass
@@ -63,9 +64,17 @@ def match_thrust(problem: DuctProblem, design: np.ndarray, T_target: float,
 
     Returns the problem at the final dp (already solved), the steps and the
     exponent k of T ~ dp^k.
+
+    On a separated flow T(dp) carries noise of about 1 %, as the eddy
+    viscosity settles a little differently from each start. So a measured
+    exponent outside EXP_RANGE is not trusted, a step that leaves the
+    bracket [dp with T < T*, dp with T > T*] goes to its geometric middle,
+    and when the steps run out the closest point is returned with a warning.
     """
     rows: List[dict] = []
     prev: Optional[Tuple[float, float]] = None
+    lo, hi = 0.0, math.inf
+    best: Optional[Tuple[float, DuctProblem]] = None
     for step in range(MAX_SECANT + 1):
         sol = problem.solve(design)
         if not sol.converged:
@@ -73,8 +82,12 @@ def match_thrust(problem: DuctProblem, design: np.ndarray, T_target: float,
                                f"on the {problem.case.Nz}x{problem.case.Nr} grid.")
         dp = problem.case.dp_disk
         T = problem.values(design)["thrust"]
-        if prev is not None and T > 0.0 and prev[1] > 0.0 and dp != prev[0]:
-            exponent = math.log(T / prev[1]) / math.log(dp / prev[0])
+        if T <= 0.0:
+            raise RuntimeError(f"Thrust {T:.4g} N at dp = {dp:.4g} Pa: no secant possible.")
+        if prev is not None and dp != prev[0]:
+            k = math.log(T / prev[1]) / math.log(dp / prev[0])
+            if EXP_RANGE[0] <= k <= EXP_RANGE[1]:
+                exponent = k
         err = T / T_target - 1.0
         row = _row(cycle, "secante", problem, T, errore_relativo=err, esponente=exponent)
         rows.append(row)
@@ -82,16 +95,32 @@ def match_thrust(problem: DuctProblem, design: np.ndarray, T_target: float,
             log(row)
         if verbose:
             print(f"  dp {dp:10.4f} Pa -> T {T:.6f} N (error {100 * err:+.3f} %)", flush=True)
+        if best is None or abs(err) < best[0]:
+            best = (abs(err), problem)
         if abs(err) < tol:
             return problem, rows, exponent
-        if T <= 0.0 or not exponent > 0.0:
-            raise RuntimeError(f"Thrust {T:.4g} N at dp = {dp:.4g} Pa: no secant possible.")
-        factor = float(np.clip((T_target / T) ** (1.0 / exponent), *DP_RANGE))
+        if err < 0.0:
+            lo = max(lo, dp)
+        else:
+            hi = min(hi, dp)
+        new_dp = dp * float(np.clip((T_target / T) ** (1.0 / exponent), *DP_RANGE))
+        if not lo < new_dp < hi and lo > 0.0 and math.isfinite(hi):
+            new_dp = math.sqrt(lo * hi)
+        if math.isfinite(hi) and lo > 0.0 and hi / lo - 1.0 < 0.1 * tol:
+            break                        # bracket closed: the noise is larger than tol
         prev = (dp, T)
-        new = DuctProblem(replace(problem.case, dp_disk=dp * factor), problem.layout)
+        new = DuctProblem(replace(problem.case, dp_disk=new_dp), problem.layout)
         new.warm_start(sol)
         problem = new
-    raise RuntimeError(f"The thrust did not reach {T_target:.4g} N in {MAX_SECANT} steps.")
+    err, problem = best
+    print(f"  WARNING: closest thrust {100 * err:.2f} % from {T_target:.4g} N "
+          f"(tolerance {100 * tol:.2f} %), dp = {problem.case.dp_disk:.4f} Pa kept", flush=True)
+    rows.append(_row(cycle, "secante_migliore", problem, problem.values(design)["thrust"],
+                     errore_relativo=problem.values(design)["thrust"] / T_target - 1.0,
+                     esponente=exponent))
+    if log:
+        log(rows[-1])
+    return problem, rows, exponent
 
 
 def initial_dp(case: PropulsionCase, layout: MorphLayout, design: np.ndarray) -> float:
