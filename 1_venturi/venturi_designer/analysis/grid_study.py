@@ -32,10 +32,10 @@ Usage
     python -m venturi_designer.analysis.grid_study                         # default case
     python -m venturi_designer.analysis.grid_study --beta 0.6 --jobs 2     # any run_venturi.py option
     python -m venturi_designer.analysis.grid_study --levels 90x36,128x51,180x72
-    python -m venturi_designer.analysis.grid_study --duct results/duct_air_20C/design.json
+    python -m venturi_designer.analysis.grid_study --duct <...>/2_venturi/05_convergenza/design.json
 
 With --duct the study runs on an optimised duct and the result under test is
-the thrust instead of C_d. The conditions come from input.py (see --input).
+the thrust instead of C_d. The conditions, dp included, come from design.json.
 """
 
 from __future__ import annotations
@@ -209,20 +209,14 @@ def error_estimate(h: Sequence[float], phi: Sequence[float], safety: float = 1.2
                 problems=problems)
 
 
-def run_duct_level(input_file: str, design_file: str, Nz: int, Nr: int) -> Dict:
+def run_duct_level(design_file: str, Nz: int, Nr: int) -> Dict:
     """Solve an optimised duct on one grid and return its thrust."""
-    import numpy as np
-    from ..cli import load_case
-    from ..geometry import MorphLayout
     from ..optimization.shape_opt import DuctProblem, for_grid, report
+    from ..optimization.target_thrust import load_design
     from ..solver.turbulence import wall_y_plus
 
-    with open(design_file, encoding="utf-8") as fh:
-        data = json.load(fh)
-    layout = MorphLayout(data["R_disk"], data["L_section"], data["n_up"], data["n_down"])
-    case, _ = load_case(input_file)
+    case, layout, design = load_design(design_file)
     problem = DuctProblem(for_grid(case, Nz, Nr), layout)
-    design = np.array(data["design"])
     t0 = time.time()
     sol = problem.solve(design)
     summary = report(problem, design)
@@ -233,8 +227,7 @@ def run_duct_level(input_file: str, design_file: str, Nz: int, Nr: int) -> Dict:
                 y_plus=float(wall_y_plus(uz, ur, sol.system.mesh, case.nu).max()))
 
 
-def duct_study(input_file: str, design_file: str, levels: Sequence[Tuple[int, int]],
-               jobs: int) -> Dict:
+def duct_study(design_file: str, levels: Sequence[Tuple[int, int]], jobs: int) -> Dict:
     """Grid study of the thrust of an optimised duct.
 
     Returns the estimate on the finest three grids: value, extrapolated
@@ -244,7 +237,7 @@ def duct_study(input_file: str, design_file: str, levels: Sequence[Tuple[int, in
     print(f"Thrust grid study: {', '.join(f'{nz}x{nr}' for nz, nr in levels)}, "
           f"{jobs} at a time.", flush=True)
     with ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = [pool.submit(run_duct_level, input_file, design_file, nz, nr)
+        futures = [pool.submit(run_duct_level, design_file, nz, nr)
                    for nz, nr in levels]
         rows = [f.result() for f in as_completed(futures)]
 
@@ -290,7 +283,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("Error: at least three grids are needed.")
         return 1
     if args.duct:
-        duct_study(args.input, args.duct, levels, args.jobs)
+        duct_study(args.duct, levels, args.jobs)
         return 0
 
     # Same ramp width on every grid: taken from the coarsest one, which
@@ -305,7 +298,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     zs = geom0.z_stations
     ramp = (throat_ramp_width(geom0.L_total, levels[0][0], zs[2], zs[3], cfg0.throat_refine)
             if cfg0.throat_refine > 1.0 else 0.5)
-    out_dir = os.path.join("results", "grid_study_" + os.path.basename(cfg0.output_dir))
+    from ..cli import RESULTS_DIR
+    out_dir = os.path.join(RESULTS_DIR, "misuratore_grid_study_" + os.path.basename(cfg0.output_dir))
     os.makedirs(out_dir, exist_ok=True)
 
     print(f"Grid study: {', '.join(f'{nz}x{nr}' for nz, nr in levels)}; "

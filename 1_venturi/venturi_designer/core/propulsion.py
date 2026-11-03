@@ -7,7 +7,13 @@ A duct alone produces no thrust. With no energy added the total pressure
 cannot rise, so at ambient exit pressure Ve <= V0 and T = mdot*(Ve - V0) <= 0.
 The energy comes from an actuator disk, a total-pressure rise dp_disk spread
 uniformly over a band of cells of the straight disk section. The disk stands
-in for the fan: dp_disk is an input that the fan sizing will provide.
+in for the fan. The thrust per nozzle is the input; dp_disk is what the dp
+loop (optimization/target_thrust.py) finds, and it goes to the fan sizing.
+
+Size limits: the tube must fit in an outer diameter D_ext_max and a length
+L_max. The inner duct, fan included, stays gap_parete inside the outer edge:
+
+    R_int_max = D_ext_max / 2 - gap_parete
 
 Boundary conditions, all of them gauge pressures relative to ambient:
 
@@ -54,13 +60,15 @@ class PropulsionCase:
     fluid: str
     V0: float                    # flight speed [m/s]
     p_amb: float                 # ambient pressure [Pa]
-    dp_disk: float               # total-pressure rise of the disk [Pa]
-    D_disk: float                # disk diameter [m]
+    D_ext_max: float             # largest outer diameter of the tube [m]
+    L_max: float                 # largest overall length of the tube [m]
     L_disk: float                # axial length of the disk band [m]
-    D_max: float                 # largest diameter allowed [m]
-    L_max: float                 # largest total length allowed [m]
+    gap_parete: float = 0.005    # outer edge to inner duct [m]
+    spessore_parete: float = 0.002   # wall of the CAD tube [m]
+    D_disk_min_ratio: float = 0.4    # smallest duct radius / R_int_max
+    dp_disk: float = 100.0       # total-pressure rise of the disk [Pa], set by the dp loop
+    T_target: Optional[float] = None # thrust per nozzle wanted [N]
     P_max: Optional[float] = None    # largest power allowed [W], None = free
-    z_disk: Optional[float] = None   # disk centre / total length, None = free
     turbulence_model: str = "baldwin_lomax"
     Nz: int = 64
     Nr: int = 26
@@ -76,15 +84,25 @@ class PropulsionCase:
     def __post_init__(self) -> None:
         if self.fluid not in FLUIDS:
             raise ValueError(f"Unknown fluid '{self.fluid}'. Known: {', '.join(FLUIDS)}.")
-        for name in ("dp_disk", "D_disk", "L_disk", "D_max", "L_max", "p_amb"):
+        for name in ("dp_disk", "L_disk", "D_ext_max", "L_max", "p_amb", "gap_parete",
+                     "spessore_parete"):
             if getattr(self, name) <= 0.0:
                 raise ValueError(f"{name} must be positive, got {getattr(self, name)}.")
         if self.V0 < 0.0:
             raise ValueError(f"V0 cannot be negative, got {self.V0}.")
-        if self.z_disk is not None and not 0.0 < self.z_disk < 1.0:
-            raise ValueError(f"z_disk must be between 0 and 1, got {self.z_disk}.")
-        if self.D_disk >= self.D_max:
-            raise ValueError(f"D_disk ({self.D_disk}) must be below D_max ({self.D_max}).")
+        if self.spessore_parete > self.gap_parete:
+            raise ValueError(f"spessore_parete ({self.spessore_parete}) must not exceed "
+                             f"gap_parete ({self.gap_parete}).")
+        if self.R_int_max <= 0.0:
+            raise ValueError(f"gap_parete ({self.gap_parete}) leaves no room inside "
+                             f"D_ext_max ({self.D_ext_max}).")
+        if not 0.0 < self.D_disk_min_ratio < 1.0:
+            raise ValueError(f"D_disk_min_ratio must be between 0 and 1, got "
+                             f"{self.D_disk_min_ratio}.")
+        if self.T_target is not None and self.T_target <= 0.0:
+            raise ValueError(f"The thrust per nozzle must be positive, got {self.T_target}.")
+        if 4.0 * self.L_disk >= self.L_max:
+            raise ValueError(f"L_disk ({self.L_disk}) is too long for L_max ({self.L_max}).")
         f = FLUIDS[self.fluid]
         self.rho = f.density_at(self.p_amb)
         self.mu = f.mu
@@ -98,9 +116,32 @@ class PropulsionCase:
         return self.mu / self.rho
 
     @property
+    def R_ext(self) -> float:
+        return 0.5 * self.D_ext_max
+
+    @property
+    def R_int_max(self) -> float:
+        """Largest radius of the inner duct [m]."""
+        return 0.5 * self.D_ext_max - self.gap_parete
+
+    @property
+    def R_min(self) -> float:
+        """Smallest radius of the duct and of the fan [m]."""
+        return self.D_disk_min_ratio * self.R_int_max
+
+    @property
     def V_jet_ideal(self) -> float:
         """Exit speed with no losses [m/s]."""
         return math.sqrt(2.0 * self.dp_disk / self.rho + self.V0 ** 2)
+
+    def dp_ideal(self, A_exit: float, T: float) -> float:
+        """dp of a lossless disk that gives thrust T through exit area A_exit [Pa].
+
+        T = rho A Ve (Ve - V0) solved for Ve, then dp = rho (Ve^2 - V0^2) / 2;
+        static, it is T / (2 A).
+        """
+        Ve = 0.5 * (self.V0 + math.sqrt(self.V0 ** 2 + 4.0 * T / (self.rho * A_exit)))
+        return 0.5 * self.rho * (Ve ** 2 - self.V0 ** 2)
 
 
 def disk_force(mesh: FVMesh, z_a: float, z_b: float, dp: float, rho: float) -> np.ndarray:

@@ -68,6 +68,21 @@ def bell_radius(D_mm: float, wall_mm: float) -> float:
     return max(0.2 * D_mm, 1.5 * wall_mm)
 
 
+def bell_envelope(R_inlet: float, wall: float) -> Tuple[float, float]:
+    """Room the bell mouth and the two lips take outside the wetted duct.
+
+    Returns the largest outer radius of the tube at the inlet and the length
+    the tube adds to the wetted duct (bell mouth upstream, lip downstream),
+    in the units of the arguments. The outer bell is the arc of radius Rb - t
+    around the same centre, closed by a half circle of diameter t.
+    """
+    Rb = bell_radius(2.0 * R_inlet, wall)
+    a = math.radians(BELL_SWEEP_DEG)
+    r_max = R_inlet + Rb * (1.0 - math.cos(a)) + 0.5 * wall * (math.cos(a) + math.sin(a))
+    upstream = Rb * math.sin(a) - 0.5 * wall * (math.sin(a) - math.cos(a))
+    return r_max, upstream + 0.5 * wall
+
+
 def wetted_path(geom) -> List[Segment]:
     """Surface the fluid touches, from the bell mouth to the outlet plane."""
     wall = [Segment(*(p and (p[0] * 1e3, p[1] * 1e3) for p in s))

@@ -12,8 +12,8 @@ eta = r / R(z), so a new R(z) only needs build_fvmesh to be called again, with
 the same topology and no mesh-deformation algorithm.
 
 Fixed by construction:
-    - the disk radius, with R' = R'' = 0 where each spline meets the section,
-      because the last three control points of the spline equal R_disk;
+    - R' = R'' = 0 where each spline meets the disk section, because the
+      three control points of the spline next to it equal R_disk;
     - R' = 0 at inlet and exit (first two control points equal), so the jet
       leaves parallel to the axis and the exit plane can sit at ambient
       pressure.
@@ -21,7 +21,10 @@ Fixed by construction:
 Design vector x, in metres:
     x[:n_up]            radii of the free intake control points, inlet first
     x[n_up:n_up+n_down] radii of the free diffuser control points, exit last
+    x[-3]               R_disk, radius of the disk section (the fan)
     x[-2], x[-1]        L_up and L_down, the two spline lengths
+
+The disk position follows from L_up: its centre is at L_up + L_section/2.
 """
 
 from __future__ import annotations
@@ -46,7 +49,6 @@ def _clamped_knots(n_ctrl: int, degree: int = 3) -> np.ndarray:
 @dataclass(frozen=True)
 class MorphLayout:
     """What stays the same for the whole optimisation."""
-    R_disk: float        # disk radius [m]
     L_section: float     # length of the straight disk section [m]
     n_up: int = 5        # free control points of the intake
     n_down: int = 8      # free control points of the diffuser
@@ -57,19 +59,19 @@ class MorphLayout:
 
     @property
     def n_vars(self) -> int:
-        return self.n_up + self.n_down + 2
+        return self.n_up + self.n_down + 3
 
-    def split(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float, float]:
+    def split(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float, float, float]:
         x = np.asarray(x, dtype=float)
         if x.size != self.n_vars:
             raise ValueError(f"Expected {self.n_vars} design variables, got {x.size}.")
         return (x[:self.n_up], x[self.n_up:self.n_up + self.n_down],
-                float(x[-2]), float(x[-1]))
+                float(x[-3]), float(x[-2]), float(x[-1]))
 
     def control_points(self, x: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Whole control polygons, each ordered along +z."""
-        up, down, _, _ = self.split(x)
-        disk = np.full(N_FIXED_DISK, self.R_disk)
+        up, down, R_disk, _, _ = self.split(x)
+        disk = np.full(N_FIXED_DISK, R_disk)
         c_up = np.concatenate(([up[0]], up, disk))
         c_down = np.concatenate((disk, down, [down[-1]]))
         return c_up, c_down
@@ -88,7 +90,9 @@ class MorphedGeometry:
         self.config = config
         self.x = np.array(x, dtype=float)
         c_up, c_down = layout.control_points(self.x)
-        _, _, self.L_up, self.L_down = layout.split(self.x)
+        _, _, self.R_disk, self.L_up, self.L_down = layout.split(self.x)
+        if self.R_disk <= 0.0:
+            raise ValueError("The disk radius must be positive.")
         if self.L_up <= 0.0 or self.L_down <= 0.0:
             raise ValueError("The spline lengths must be positive.")
         self._up = BSpline(_clamped_knots(c_up.size), c_up, 3)
@@ -103,7 +107,7 @@ class MorphedGeometry:
                                     self.L_total, self.L_total])
         self.R_inlet = float(c_up[0])
         self.R_exit = float(c_down[-1])
-        self.R_throat = float(layout.R_disk)
+        self.R_throat = self.R_disk
 
     def radius(self, z):
         """Wall radius R(z) [m]. Accepts a number or an array."""
@@ -129,6 +133,21 @@ class MorphedGeometry:
         z = np.linspace(0.0, self.L_total, n_points)
         return z, self.radius(z)
 
+    def bspline_curves(self) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Intake and diffuser as exact planar B-spline curves (knots, poles (z, r)).
+
+        R(s) is a clamped cubic B-spline and z = z0 + L s. On a clamped knot
+        vector s itself equals sum(xi_i N_i(s)), xi_i being the Greville
+        abscissae, so the curve (z, R) is the B-spline with poles
+        (z0 + L xi_i, c_i): an exact copy of the wall, for the STEP files.
+        """
+        out = []
+        for spline, z0, L in ((self._up, 0.0, self.L_up), (self._down, self.z_b, self.L_down)):
+            t, c = spline.t, spline.c
+            xi = np.array([t[i + 1:i + 4].mean() for i in range(c.size)])
+            out.append((t.copy(), np.column_stack((z0 + L * xi, c))))
+        return out
+
     def wall_segments(self) -> List[Segment]:
         """The wall as many short straight pieces [m]."""
         z, r = self.profile_points(N_WALL_SAMPLES + 1)
@@ -136,10 +155,12 @@ class MorphedGeometry:
         return [Segment(a, b) for a, b in zip(pts, pts[1:])]
 
 
-def fit_design(layout: MorphLayout, z, R, z_a: float, z_b: float) -> np.ndarray:
+def fit_design(layout: MorphLayout, z, R, z_a: float, z_b: float,
+               R_disk: float) -> np.ndarray:
     """Design vector closest, in least squares, to a given profile R(z).
 
-    z_a..z_b is the part of the given profile replaced by the disk section.
+    z_a..z_b is the part of the given profile replaced by the disk section,
+    of radius R_disk.
     """
     z, R = np.asarray(z, dtype=float), np.asarray(R, dtype=float)
     L_up, L_down = z_a, float(z[-1]) - z_b
@@ -151,15 +172,15 @@ def fit_design(layout: MorphLayout, z, R, z_a: float, z_b: float) -> np.ndarray:
         if disk_last:      # c = (c0, c0, c1 .. , disk x 3)
             free = np.column_stack([A[:, 0] + A[:, 1]]
                                    + [A[:, k] for k in range(2, 1 + n_free)])
-            rhs = target - layout.R_disk * A[:, -N_FIXED_DISK:].sum(axis=1)
+            rhs = target - R_disk * A[:, -N_FIXED_DISK:].sum(axis=1)
         else:              # c = (disk x 3, c0 .. , cN, cN)
             first = N_FIXED_DISK
             free = np.column_stack([A[:, first + k] for k in range(n_free - 1)]
                                    + [A[:, -2] + A[:, -1]])
-            rhs = target - layout.R_disk * A[:, :N_FIXED_DISK].sum(axis=1)
+            rhs = target - R_disk * A[:, :N_FIXED_DISK].sum(axis=1)
         return np.linalg.lstsq(free, rhs, rcond=None)[0]
 
     m_up, m_down = z <= z_a, z >= z_b
     up = fit(layout.n_up, z[m_up] / L_up, R[m_up], True)
     down = fit(layout.n_down, (z[m_down] - z_b) / L_down, R[m_down], False)
-    return np.concatenate((up, down, [L_up, L_down]))
+    return np.concatenate((up, down, [R_disk, L_up, L_down]))

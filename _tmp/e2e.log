@@ -1,0 +1,17 @@
+Profilo bang_bang: a = 0.04 m/s^2, v_max = 0.2 m/s
+Spinta della faccia 0.4 N, per ugello 0.2 N (2 ugelli)
+  written _tmp\risultati\prova_e2e\1_spinta\spinta.json
+  written _tmp\risultati\prova_e2e\1_spinta\RISULTATO.md
+  written _tmp\risultati\prova_e2e\1_spinta\grafici\moto.svg
+  written _tmp\risultati\prova_e2e\1_spinta\excel\spinta.xlsx
+Thrust per nozzle 0.2 N (from _tmp\risultati\prova_e2e\1_spinta\spinta.json)
+Tube within D 70.0 mm x L 150.0 mm, inner duct up to D 60.0 mm, 12 design variables
+
+Cycle 1: dp = 42.0597 Pa
+ Shape optimisation, grid 40 x 18
+  it   1 [   12.8 s] T = 0.1773 N, D_disk 60.0 mm, D_exit 60.0 mm, L 102 mm, separation +6.952, mach +0.891
+  it   2 [   54.2 s] T = 0.1774 N, D_disk 60.0 mm, D_exit 60.0 mm, L 92 mm, separation +7.008, mach +0.891
+  it   3 [   98.4 s] T = 0.1774 N, D_disk 60.0 mm, D_exit 60.0 mm, L 87 mm, separation +7.023, mach +0.891
+ Secant on dp, grid 40 x 18
+Error: Flow not converged at dp = 42.06 Pa on the 40x18 grid.
+rc 2 136 s

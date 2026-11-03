@@ -9,9 +9,15 @@ The optimiser moves the design vector of morph.py. Every shape starts its
 Newton solve from the previous flow: the unknowns are scaled, so the same
 numbers are a good guess on the next shape and need no interpolation.
 
+Design variables: the control points of the two splines, the disk (fan)
+radius and the two spline lengths, so the optimiser chooses diameter and
+position of the fan. Every radius stays between R_min and R_int_max.
+
 Constraints, all written as g(x) >= 0 for SLSQP:
     geometric (no flow solution needed)
-        total length, diffuser slope, intake slope, smooth control polygon
+        overall length and outer diameter of the tube with its bell mouth,
+        no radius below the disk radius (the fan sits in the throat),
+        diffuser slope, intake slope, smooth control polygon
     flow (each one is an adjoint)
         wall friction above a limit in the diffuser, as a separation margin;
         Mach limit for gases; vapour pressure for liquids; power limit
@@ -36,23 +42,25 @@ from scipy.optimize import minimize
 
 from .adjoint import (DuctSystem, FlowSolution, adjoint_gradients, momentum_balance,
                       solve_flow, thrust, time_march_start)
-from ..core.config import VenturiConfig
 from ..core.propulsion import PropulsionCase
+from ..export.cad import bell_envelope
 from ..geometry.morph import MorphedGeometry, MorphLayout, fit_design
-from ..geometry.venturi import VenturiGeometry
 from ..solver.fvmesh import build_fvmesh
 
 CF_MIN = 5e-4          # smallest friction coefficient allowed in the diffuser
 MACH_MAX = 0.3         # the solver assumes constant density
 SLOPE_DIFFUSER = math.tan(math.radians(7.0))   # steepest diffuser wall
 SLOPE_INTAKE = math.tan(math.radians(30.0))    # steepest intake wall
-BEND_MAX = 0.25        # largest second difference of the control polygon / R_disk
-Z_DISK_TOL = 0.005     # allowed drift of the disk position, as a fraction of the length
+BEND_MAX = 0.25        # largest second difference of the control polygon / R_int_max
 KS_RHO = 40.0          # sharpness of the smooth minimum
 THROAT_RAMP = 1.5      # cell-size ramp, fixed so the grid moves smoothly
 N_SLOPE_SAMPLES = 24   # slope checks along each spline
 STEP_RADIUS = 1e-6     # finite-difference step on a control point [m]
 STEP_LENGTH = 1e-5     # finite-difference step on a length [m]
+DISK_START = 0.8       # starting disk radius / R_int_max
+INLET_START = 1.2      # starting inlet radius / disk radius
+START_SPLIT = 0.3      # share of the free length given to the starting intake
+START_SLOPE = 0.6      # steepest starting wall / steepest wall allowed
 
 
 def ks_min(values: np.ndarray, rho: float = KS_RHO) -> float:
@@ -99,36 +107,49 @@ def cavitation_margin(sys_: DuctSystem, x: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 # Starting shape
 # ---------------------------------------------------------------------------
+def inlet_radius_limit(case: PropulsionCase) -> float:
+    """Largest inlet radius whose bell mouth stays inside D_ext_max [m]."""
+    lo, hi = 0.0, case.R_ext
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if bell_envelope(mid, case.spessore_parete)[0] <= case.R_ext:
+            lo = mid
+        else:
+            hi = mid
+    return min(lo, case.R_int_max)
+
+
 def initial_design(case: PropulsionCase, n_up: int = 5, n_down: int = 8):
-    """A mild Venturi inside the limits, fitted with the morphing splines."""
-    D_in = min(1.25 * case.D_disk, case.D_max)
+    """A mild Venturi inside the limits, fitted with the morphing splines.
+
+    Intake and diffuser are half cosines, R_in -> R_disk -> R_exit, whose
+    steepest slope is START_SLOPE of the allowed one: the radius changes are
+    cut where the length is too short for them.
+    """
+    R_in = min(INLET_START * DISK_START * case.R_int_max, 0.98 * inlet_radius_limit(case))
+    R_disk = max(min(DISK_START * case.R_int_max, R_in / INLET_START), case.R_min)
+    if R_in <= R_disk:
+        raise ValueError(f"No room for an intake: inlet radius {R_in*1e3:.1f} mm, "
+                         f"disk radius {R_disk*1e3:.1f} mm. Raise D_ext_max or lower "
+                         f"spessore_parete / D_disk_min_ratio.")
     L_section = 2.0 * case.L_disk
-    cfg = VenturiConfig(
-        D=D_in, beta=case.D_disk / D_in, alpha_conv_deg=30.0, alpha_div_deg=5.0,
-        L_inlet_ratio=0.15, L_throat_ratio=L_section / case.D_disk, L_outlet_ratio=0.15,
-        fluid=case.fluid, p_throat_target=None, v_inlet=1.0)
-    geom = VenturiGeometry(cfg)
-    z, R = geom.profile_points(1200)
-    z_a, z_b = float(geom.z_stations[2]), float(geom.z_stations[3])
-    room = 0.9 * case.L_max - L_section
-    excess = z[-1] - L_section
-    if excess > room:          # squeeze the two splines, keep the section
-        k = room / excess
-        z = np.where(z <= z_a, z * k,
-                     np.where(z >= z_b, z_a * k + L_section + (z - z_b) * k,
-                              z_a * k + (z - z_a)))
-        z_a, z_b = z_a * k, z_a * k + L_section
-    layout = MorphLayout(R_disk=0.5 * case.D_disk, L_section=L_section,
-                         n_up=n_up, n_down=n_down)
-    d = fit_design(layout, z, R, z_a, z_b)
-    d[:-2] = np.clip(d[:-2], layout.R_disk, 0.5 * case.D_max)
-    if case.z_disk is not None:      # move the section, the splines just stretch
-        L_total = d[-2] + L_section + d[-1]
-        d[-2] = case.z_disk * L_total - 0.5 * L_section
-        d[-1] = L_total - L_section - d[-2]
-        if d[-2] <= 0.0 or d[-1] <= 0.0:
-            raise ValueError(f"z_disk = {case.z_disk} puts the disk section outside the "
-                             f"{L_total:.3f} m long starting duct.")
+    room = 0.9 * (case.L_max - bell_envelope(R_in, case.spessore_parete)[1]) - L_section
+    if room <= 0.0:
+        raise ValueError(f"L_max ({case.L_max}) leaves no room around the disk section.")
+    L_up, L_down = START_SPLIT * room, (1.0 - START_SPLIT) * room
+    # a half cosine of rise dR over L has its steepest slope pi dR / (2 L)
+    R_in = min(R_in, R_disk + START_SLOPE * SLOPE_INTAKE * 2.0 * L_up / math.pi)
+    R_exit = min(case.R_int_max,
+                 R_disk + START_SLOPE * SLOPE_DIFFUSER * 2.0 * L_down / math.pi)
+    z_up = np.linspace(0.0, L_up, 400)
+    z_down = np.linspace(0.0, L_down, 800)
+    z_a, z_b = L_up, L_up + L_section
+    z = np.concatenate((z_up, z_b + z_down))
+    R = np.concatenate((R_disk + (R_in - R_disk) * 0.5 * (1.0 + np.cos(np.pi * z_up / L_up)),
+                        R_disk + (R_exit - R_disk) * 0.5 * (1.0 - np.cos(np.pi * z_down / L_down))))
+    layout = MorphLayout(L_section=L_section, n_up=n_up, n_down=n_down)
+    d = fit_design(layout, z, R, z_a, z_b, R_disk)
+    d[:-3] = np.clip(d[:-3], R_disk, case.R_int_max)
     return layout, d
 
 
@@ -142,9 +163,10 @@ class DuctProblem:
         self.case = case
         self.layout = layout
         self.verbose = verbose
-        self.Re_ref = case.V_jet_ideal * case.D_disk / case.nu
+        self.Re_ref = case.V_jet_ideal * 2.0 * case.R_int_max / case.nu
         self.sol: Optional[FlowSolution] = None
         self._key = None
+        self._foreign = False        # self.sol comes from another dp
         self.functions: Dict[str, Callable] = {"thrust": thrust,
                                                "separation": separation_margin}
         if case.is_gas:
@@ -185,10 +207,28 @@ class DuctProblem:
             if not sol.converged:
                 sol = solve_flow(s, self.sol.x, self.sol.nu_t, sigma0=200.0,
                                  verbose=self.verbose)
+            if not sol.converged:     # too far from the last flow: start afresh
+                g = self.geometry(d)
+                Q0 = 0.85 * math.pi * g.R_exit ** 2 * self.case.V_jet_ideal
+                x, nu_t = time_march_start(s.mesh, self.case, s, Q0)
+                sol = solve_flow(s, x, nu_t, verbose=self.verbose)
         if sol.converged:
-            self.sol, self._key = sol, key
+            self.sol, self._key, self._foreign = sol, key, False
             self._grads = {}
         return sol
+
+    def warm_start(self, sol: FlowSolution) -> None:
+        """Start the next solve from the flow of another dp on the same grid.
+
+        The unknowns are scaled by the ideal jet speed, so the same numbers
+        are already a good guess; the eddy viscosity scales with that speed.
+        A flow from another grid is ignored.
+        """
+        if (sol.system.Nz, sol.system.Nr) != (self.case.Nz, self.case.Nr):
+            return
+        k = self.case.V_jet_ideal / sol.system.case.V_jet_ideal
+        self.sol = replace(sol, nu_t=sol.nu_t * k)
+        self._key, self._foreign, self._grads = None, True, {}
 
     def values(self, d: np.ndarray) -> Dict[str, float]:
         sol = self.solve(d)
@@ -204,18 +244,17 @@ class DuctProblem:
     # -- geometric constraints (>= 0) ----------------------------------------
     def geometric(self, d: np.ndarray) -> np.ndarray:
         g = self.geometry(d)
-        lay = self.layout
+        lay, c = self.layout, self.case
         c_up, c_down = lay.control_points(d)
+        up, down, R_disk, _, _ = lay.split(d)
         s = (np.arange(N_SLOPE_SAMPLES) + 0.5) / N_SLOPE_SAMPLES
         dr_up = g.radius_derivative(g.L_up * s)
         dr_down = g.radius_derivative(g.z_b + g.L_down * s)
-        bend = np.concatenate((np.diff(c_up, 2), np.diff(c_down, 2))) / lay.R_disk
-        position = []
-        if self.case.z_disk is not None:
-            shift = (0.5 * (g.z_a + g.z_b) / g.L_total - self.case.z_disk) / Z_DISK_TOL
-            position = [1.0 - shift, 1.0 + shift]
+        bend = np.concatenate((np.diff(c_up, 2), np.diff(c_down, 2))) / c.R_int_max
+        r_env, l_env = bell_envelope(g.R_inlet, c.spessore_parete)
         return np.concatenate((
-            [(self.case.L_max - g.L_total) / self.case.L_max], position,
+            [(c.L_max - g.L_total - l_env) / c.L_max, (c.R_ext - r_env) / c.R_ext],
+            (np.r_[up, down] - R_disk) / c.R_int_max,
             1.0 - dr_down / SLOPE_DIFFUSER, 1.0 + dr_down / SLOPE_DIFFUSER,
             1.0 - dr_up / SLOPE_INTAKE, 1.0 + dr_up / SLOPE_INTAKE,
             1.0 - bend / BEND_MAX, 1.0 + bend / BEND_MAX))
@@ -247,8 +286,8 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
              log: Optional[str] = None, verbose: bool = True) -> OptResult:
     """Largest thrust with SLSQP. All variables and functions are scaled."""
     case, lay = problem.case, problem.layout
-    # variables scaled to order one: radii by R_disk, lengths by L_max
-    scale = np.r_[np.full(d0.size - 2, lay.R_disk), case.L_max, case.L_max]
+    # variables scaled to order one: radii by R_int_max, lengths by L_max
+    scale = np.r_[np.full(d0.size - 2, case.R_int_max), case.L_max, case.L_max]
     T0 = problem.values(d0)["thrust"]
     T_ref = abs(T0)
     t0 = time.time()
@@ -284,7 +323,8 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
         vals = problem.values(d)
         g = problem.geometry(d)
         row = dict(iteration=len(history) + 1, time_s=round(time.time() - t0, 1),
-                   L_total=g.L_total, D_inlet=2 * g.R_inlet, D_exit=2 * g.R_exit,
+                   L_total=g.L_total, D_inlet=2 * g.R_inlet, D_disk=2 * g.R_disk,
+                   D_exit=2 * g.R_exit,
                    geometric_min=float(problem.geometric(d).min()), **vals)
         history.append(row)
         feasible = (row["geometric_min"] > -1e-3
@@ -293,15 +333,16 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
             best.update(d=d.copy(), T=vals["thrust"])
         if verbose:
             print(f"  it {row['iteration']:3d} [{row['time_s']:7.1f} s] "
-                  f"T = {vals['thrust']:.4f} N, D_exit {row['D_exit']*1e3:.1f} mm, "
+                  f"T = {vals['thrust']:.4f} N, D_disk {row['D_disk']*1e3:.1f} mm, "
+                  f"D_exit {row['D_exit']*1e3:.1f} mm, "
                   f"L {row['L_total']*1e3:.0f} mm, "
                   + ", ".join(f"{n} {margin(n, vals):+.3f}" for n in flow_names), flush=True)
         if log:
             with open(log, "w", encoding="utf-8") as fh:
                 json.dump(dict(design=d.tolist(), history=history), fh, indent=1)
 
-    lo = np.r_[np.full(d0.size - 2, lay.R_disk), 0.05 * case.L_max, 0.05 * case.L_max] / scale
-    hi = np.r_[np.full(d0.size - 2, 0.5 * case.D_max), case.L_max, case.L_max] / scale
+    lo = np.r_[np.full(d0.size - 2, case.R_min), 0.05 * case.L_max, 0.05 * case.L_max] / scale
+    hi = np.r_[np.full(d0.size - 2, case.R_int_max), case.L_max, case.L_max] / scale
     cons = [dict(type="ineq", fun=lambda u: problem.geometric(u * scale),
                  jac=lambda u: problem.geometric_jac(u * scale) * scale),
             dict(type="ineq", fun=flow_con, jac=flow_jac)]
@@ -321,12 +362,18 @@ def report(problem: DuctProblem, d: np.ndarray) -> Dict[str, float]:
     uz, ur = s.velocities(sol.x)
     T = thrust(s, sol.x)
     P = power(s, sol.x)
-    return dict(thrust=T, thrust_from_forces=momentum_balance(s, sol.x), power=P,
-                thrust_per_power=T / P, Q=float(sol.x[-1] * s.s_Q),
-                ideal_thrust=(2.0 * case.dp_disk * math.pi * g.R_exit ** 2
-                              if case.V0 == 0.0 else float("nan")),
+    Q = float(sol.x[-1] * s.s_Q)
+    A_e = math.pi * g.R_exit ** 2
+    r_env, l_env = bell_envelope(g.R_inlet, case.spessore_parete)
+    return dict(dp_disk=case.dp_disk, thrust=T, thrust_from_forces=momentum_balance(s, sol.x),
+                power=P, thrust_per_power=T / P, Q=Q, mass_flow=case.rho * Q,
+                V_disk=Q / (math.pi * g.R_disk ** 2), V_exit=Q / A_e,
+                ideal_thrust=(2.0 * case.dp_disk * A_e if case.V0 == 0.0 else float("nan")),
                 area_ratio=(g.R_exit / g.R_throat) ** 2, D_inlet=2 * g.R_inlet,
+                D_disk=2 * g.R_disk, z_disk=0.5 * (g.z_a + g.z_b),
                 D_exit=2 * g.R_exit, L_total=g.L_total,
+                D_ext_tube=2.0 * max(r_env, case.R_int_max + case.spessore_parete),
+                L_tube=g.L_total + l_env,
                 mach_max=float(np.sqrt(uz ** 2 + ur ** 2).max() / case.speed_of_sound),
                 separation_margin=separation_margin(s, sol.x),
                 reversed_cells=int((uz < 0.0).sum()), residual=sol.residual)

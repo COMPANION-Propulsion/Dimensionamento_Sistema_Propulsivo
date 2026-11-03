@@ -1,0 +1,18 @@
+{
+ "input": {
+  "distanza": 1.0,
+  "tempo": 10.0,
+  "massa": 10.0,
+  "n_ugelli": 2,
+  "profilo": "bang_bang",
+  "frazione_crociera": 0.0,
+  "fattore_margine": 1.0
+ },
+ "t_accelerazione_s": 5.0,
+ "t_crociera_s": 0.0,
+ "accelerazione_m_s2": 0.04,
+ "v_max_m_s": 0.2,
+ "T_totale_N": 0.4,
+ "T_ugello_N": 0.2,
+ "impulso_per_ugello_Ns": 2.0
+}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -31,21 +31,26 @@ def _attach_fields(grid, uz, u_y, u_z, p) -> None:
     grid.point_data["Pressure"] = _point_array(p)
 
 
-def export_paraview_2d(mesh, uz, ur, p, out_dir: str) -> Optional[str]:
-    """Meridional plane (x = axial, y = radial) as venturi_cfd_2d.vts."""
+def export_paraview_2d(mesh, uz, ur, p, out_dir: str, extra: Optional[Dict] = None,
+                       name: str = "venturi_cfd_2d.vts") -> Optional[str]:
+    """Meridional plane (x = axial, y = radial); extra = more (Nz, Nr) cell fields."""
     if pv is None:
-        print("      Warning: pyvista is not installed; skipping venturi_cfd_2d.vts.")
+        print(f"      Warning: pyvista is not installed; skipping {name}.")
         return None
-    path = os.path.join(out_dir, "venturi_cfd_2d.vts")
+    path = os.path.join(out_dir, name)
     grid = pv.StructuredGrid(mesh.z_cc, mesh.r_c, np.zeros_like(mesh.z_cc))
     _attach_fields(grid, uz, ur, np.zeros_like(ur), p)
     grid.point_data["Axial_Velocity"] = _point_array(uz)
     grid.point_data["Radial_Velocity"] = _point_array(ur)
+    for key, a in (extra or {}).items():
+        grid.point_data[key] = _point_array(a)
     grid.save(path)
     return path
 
 
-def export_paraview_3d(mesh, uz, ur, p, out_dir: str, n_theta: int = 72) -> Optional[str]:
+def export_paraview_3d(mesh, uz, ur, p, out_dir: str, n_theta: int = 72,
+                       extra: Optional[Dict] = None,
+                       name: str = "venturi_cfd_3d.vts") -> Optional[str]:
     """Full 3D field as venturi_cfd_3d.vts, made by spinning the plane about x.
 
     The (Nz, Nr) plane is rotated in n_theta steps, giving an
@@ -54,9 +59,9 @@ def export_paraview_3d(mesh, uz, ur, p, out_dir: str, n_theta: int = 72) -> Opti
     short of the wall and of the axis.
     """
     if pv is None:
-        print("      Warning: pyvista is not installed; skipping venturi_cfd_3d.vts.")
+        print(f"      Warning: pyvista is not installed; skipping {name}.")
         return None
-    path = os.path.join(out_dir, "venturi_cfd_3d.vts")
+    path = os.path.join(out_dir, name)
     th = np.linspace(0.0, 2.0 * np.pi, n_theta + 1)[None, None, :]
     z3 = np.broadcast_to(mesh.z_cc[:, :, None], mesh.z_cc.shape + (th.shape[2],))
     r3 = mesh.r_c[:, :, None]
@@ -64,5 +69,7 @@ def export_paraview_3d(mesh, uz, ur, p, out_dir: str, n_theta: int = 72) -> Opti
     rep = lambda a: np.broadcast_to(a[:, :, None], a.shape + (th.shape[2],))
     ur3 = ur[:, :, None]
     _attach_fields(grid, rep(uz), ur3 * np.cos(th), ur3 * np.sin(th), rep(p))
+    for key, a in (extra or {}).items():
+        grid.point_data[key] = _point_array(rep(a))
     grid.save(path)
     return path
