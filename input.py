@@ -10,7 +10,7 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": Mk1_Valori_da_Script_Matti,          # None = name built from the inputs + hash, or a string of your choice
+    "nome": "TEST_1",          # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
@@ -34,8 +34,8 @@ VENTURI = {
     "T_ugello": None,          # [N] None = from risultati/<caso>/1_spinta/spinta.json
 
     # --- size of the tube ---------------------------------------------------
-    "D_ext_max": 0.07,         # [m] largest OUTER diameter of the tube
-    "L_max": 0.15,             # [m] largest overall length, bell mouth included
+    "D_ext_max": 0.05,         # [m] largest OUTER diameter of the tube
+    "L_max": 0.20,             # [m] largest overall length, bell mouth included
     "gap_parete": 0.005,       # [m] from the outer edge to the inner duct
     "spessore_parete": 0.005,  # [m] wall of the CAD tube, at most gap_parete
 
