@@ -1,0 +1,77 @@
+[
+ {
+  "ciclo": 1,
+  "tipo": "ottimizzazione",
+  "griglia": "64x26",
+  "dp_disk": 42.10187704922725,
+  "spinta": 0.22144656958119868,
+  "spinta_iniziale": 0.16986952793365775,
+  "iterazioni": 16,
+  "messaggio": "Optimization terminated successfully"
+ },
+ {
+  "ciclo": 1,
+  "tipo": "ottimizzazione",
+  "griglia": "90x36",
+  "dp_disk": 42.10187704922725,
+  "spinta": 0.22134026014965796,
+  "spinta_iniziale": 0.22132157297393726,
+  "iterazioni": 1,
+  "messaggio": "Optimization terminated successfully"
+ },
+ {
+  "ciclo": 1,
+  "tipo": "secante",
+  "griglia": "90x36",
+  "dp_disk": 42.10187704922725,
+  "spinta": 0.22134026014965796,
+  "errore_relativo": 0.10670130074828976,
+  "esponente": 1.0
+ },
+ {
+  "ciclo": 1,
+  "tipo": "secante",
+  "griglia": "90x36",
+  "dp_disk": 38.04267422543039,
+  "spinta": 0.19970139589219957,
+  "errore_relativo": -0.0014930205390022433,
+  "esponente": 1.0147374270607772
+ },
+ {
+  "ciclo": 1,
+  "tipo": "secante",
+  "griglia": "90x36",
+  "dp_disk": 38.0987308990541,
+  "spinta": 0.1999987836928563,
+  "errore_relativo": -6.081535718460707e-06,
+  "esponente": 1.010607160587863
+ },
+ {
+  "ciclo": 2,
+  "tipo": "ottimizzazione",
+  "griglia": "90x36",
+  "dp_disk": 38.0987308990541,
+  "spinta": 0.1999905212944417,
+  "spinta_iniziale": 0.19999466518780512,
+  "iterazioni": 1,
+  "messaggio": "Optimization terminated successfully"
+ },
+ {
+  "ciclo": 2,
+  "tipo": "secante",
+  "griglia": "90x36",
+  "dp_disk": 38.0987308990541,
+  "spinta": 0.1999905212944417,
+  "errore_relativo": -4.739352779159489e-05,
+  "esponente": 1.010607160587863
+ },
+ {
+  "ciclo": 0,
+  "tipo": "finale",
+  "griglia": "180x72",
+  "dp_disk": 38.111962622515875,
+  "spinta": 0.2000002942673366,
+  "errore_relativo": 1.471336682934421e-06,
+  "esponente": 1.010607160587863
+ }
+]

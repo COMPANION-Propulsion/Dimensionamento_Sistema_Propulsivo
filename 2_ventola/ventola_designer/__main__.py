@@ -11,6 +11,9 @@ from .paraview import export_paraview_results
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'cp':
+        from .cp_map import main as cp_main
+        return cp_main(argv[1:])
     if argv and argv[0] == 'size':
         from .optimizer import main as size_main
         return size_main(argv[1:])
@@ -36,6 +39,8 @@ def main(argv=None):
             raise ValueError("La cartella risultati esiste e non è vuota: scegliere un nuovo percorso.")
         export_geometry(out, case, design, sections, load_catalog())
         export_paraview_results(out, case, [], {"design": design})
+        from .result_layout import organize_results
+        organize_results(out)
         print(f"Geometria iniziale generata: {profile}, {blades} pale.")
         print(f"Risultati: {out.resolve()}")
         print("Stato: seme NON OTTIMIZZATO. Per dimensionare usare python -m ventola_designer.optimizer --input PERCORSO_JSON.")

@@ -19,6 +19,7 @@ from .settings import sizing_settings
 from .geometry_checks import screen_geometry
 from .verification import finalize_attempt
 from .paraview import export_paraview_results
+from .duty import metric_key, target_key, margin_key, grid_limit_key
 
 
 def variable_bounds(case):
@@ -58,7 +59,7 @@ def evaluate(case, design, polar, stations=None):
                for point,rpm in zip(case['operating_points'],design['rpm_by_point'])]
     energy = sum(r['shaft_power_W']*p['duration_s'] for r,p in zip(results,case['operating_points']))
     # Margine numerico configurabile; non margine di sicurezza fisico.
-    constraints = [r['thrust_rotor_N']/(p['minimum_rotor_thrust_N']*(1+cfg['thrust_numerical_margin']))-1
+    constraints = [r[metric_key(case)]/(p[target_key(case)]*(1+cfg[margin_key(case)]))-1
                    for r,p in zip(results,case['operating_points'])]
     constraints += [cfg['max_Mach']-r['Mach_max'] for r in results]
     # Solidita locale B*c/(2*pi*r), controllo su griglia indipendente dai pannelli BEMT.
@@ -140,16 +141,18 @@ def _optimize_start(case, profile, blades, polar, seed_energy, seed, maxiter):
     try:
         energy, cons, cases = evaluate(case,design,polar)
         fine_energy, fine_cons, fine_cases = evaluate(case,design,polar,stations=cfg['stations_verification'])
-        changes = [abs(f['thrust_rotor_N']/c['thrust_rotor_N']-1) for c,f in zip(cases,fine_cases)]
+        changes = [abs(f[metric_key(case)]/c[metric_key(case)]-1) for c,f in zip(cases,fine_cases)]
         bounds_ok = bool(np.all(result.x >= -1e-9) and np.all(result.x <= 1+1e-9))
         accepted = bool(result.success and bounds_ok and min(cons)>=-cfg['constraint_tolerance']
-                        and min(fine_cons)>=-cfg['constraint_tolerance'] and max(changes)<cfg['max_thrust_grid_change']
+                        and min(fine_cons)>=-cfg['constraint_tolerance'] and max(changes)<cfg[grid_limit_key(case)]
                         and energy<=seed_energy*(1+1e-6))
         report.update(accepted=accepted,status='converged_feasible' if accepted else 'not_accepted',
                       geometry_screening=screen_geometry(design,2*cfg['geometry_stations']-1,
                           cfg['minimum_section_thickness_m'],cfg['minimum_circumferential_gap_m'])[1],
                       energy_J=fine_energy,coarse_energy_J=energy,
-                      min_constraint=float(min(fine_cons)),thrust_refinement_changes=changes,
+                      min_constraint=float(min(fine_cons)),refinement_metric=metric_key(case),
+                      duty_refinement_changes=changes,
+                      thrust_refinement_changes=[abs(f['thrust_rotor_N']/c['thrust_rotor_N']-1) for c,f in zip(cases,fine_cases)],
                       cases=[{k:v for k,v in r.items() if k!='local'} for r in fine_cases],
                       polar_coordinates_sha256=polar.data['coordinates_sha256'])
     except ModelDomainError as exc:
@@ -157,9 +160,28 @@ def _optimize_start(case, profile, blades, polar, seed_energy, seed, maxiter):
     return finalize_attempt(case,report,polar,evaluate)
 
 
+def default_output_directory(case):
+    """Salva nel caso Venturi comune a tutti i punti, se identificabile."""
+    roots = set()
+    points = case['operating_points']
+    for point in points:
+        source = point.get('venturi_source', {}).get('path')
+        if not source:
+            break
+        path = Path(source).resolve()
+        if (path.name != 'risultati.json' or path.parent.name != '00_sintesi'
+                or path.parent.parent.name != '2_venturi'):
+            break
+        roots.add(path.parents[2])
+    else:
+        if points and len(roots) == 1:
+            return next(iter(roots))/'3_ventola'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+    return Path(__file__).resolve().parents[1]/'ventola_output'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--input',type=Path,default=Path('input_esempio.json'))
+    parser.add_argument('--input',type=Path,default=Path(__file__).resolve().parents[1]/'input_venturi.json')
     parser.add_argument('--profiles',nargs='+')
     parser.add_argument('--blades',nargs='+',type=int)
     parser.add_argument('--maxiter',type=int)
@@ -182,16 +204,21 @@ def main(argv=None):
         from .config import operating_air
         print(json.dumps({'status':'input_valid_no_optimization','settings':sizing_settings(case),
                           'velocity_reference':case['velocity_reference'],
-                          'operating_points':[{'name':p['name'],'air':operating_air(case,p)}
+                          'design_mode':case.get('design_mode','thrust'), 'rotor':case['rotor'],
+                          'operating_points':[{**p,'air':operating_air(case,p)}
                                               for p in case['operating_points']]},indent=2))
         return 0
-    out = args.output or Path('ventola_output')/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+    for point in case['operating_points']:
+        if 'venturi_source' in point:
+            print(f"Input Venturi [{point['name']}]: {point['venturi_source']['path']}", flush=True)
+    out = args.output or default_output_directory(case)
     out.mkdir(parents=True,exist_ok=False)
+    print(f'Cartella risultati: {out.resolve()}', flush=True)
     report = {'method':'SLSQP_local_discrete_enumeration','complete':False,'input_case':case,'runs':[],
               'scope':{'profiles':profiles,'blade_counts':blades},'best':None,
               'settings':sizing_settings(case),
               'limitations':['Rotor-only preliminary BEMT; duct not modeled. Tip/hub correction follows settings.loss_model; Prandtl option is for a free rotor only.',
-                             'Velocity input interpreted as far-upstream axial speed.',
+                             'Velocity convention: '+case['velocity_reference']+'.',
                              'Numerical polars, no experimental validation or structural verification.',
                              'Local multistart optimization; global optimum not guaranteed.',
                              'Chord, pitch, solidity and Mach bounds are provisional project choices.',
@@ -222,6 +249,8 @@ def main(argv=None):
     (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
     (out/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
     (out/'RISULTATO.md').write_text(render_report(report),encoding='utf-8')
+    from .result_layout import organize_results
+    organize_results(out)
     print(f'Report: {out.resolve()}')
     return 0 if report['best'] else 2
 

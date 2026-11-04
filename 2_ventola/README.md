@@ -1,6 +1,16 @@
 # Dimensionamento preliminare della ventola
 
-Partire da `input_esempio.json`: contiene i requisiti modificabili dall'utilizzatore.
+Per il dimensionamento dal Venturi partire da [input_venturi.json](input_venturi.json):
+il campo `venturi_result: "auto"` seleziona l'export Venturi piu recente disponibile.
+Avviare dalla cartella `2_ventola` con
+`.\.venv\Scripts\python.exe -m ventola_designer size`.
+Diametro, pressione totale, portata e
+densità vengono importati; la velocità sulle pale è ricalcolata sull'area libera
+del mozzo. Guida: [input dal Venturi](docs/VENTURI_INPUT.md).
+
+Le istruzioni seguenti per `input_esempio.json` riguardano il precedente modo a
+spinta del rotore libero, mantenuto per compatibilità.
+`input_esempio.json` contiene i requisiti modificabili dall'utilizzatore.
 I valori inclusi sono dimostrativi. Il dimensionatore genera la geometria delle
 pale e cerca con SLSQP un candidato che rispetti la spinta minima in tutte le
 condizioni, minimizzando l'energia meccanica del ciclo con il modello BEMT.
@@ -36,7 +46,9 @@ Per avviare il dimensionamento con i requisiti del file:
 
 Per usare un altro file, sostituire il percorso dopo `--input`. `--output` permette
 di scegliere una nuova cartella di destinazione; altrimenti il programma crea
-una cartella datata sotto `ventola_output/`.
+una cartella datata sotto `risultati/<caso>/3_ventola/` se tutti i punti provengono
+dallo stesso caso Venturi nella struttura standard. Negli altri casi usa
+`2_ventola/ventola_output/`.
 
 Per verificare il software:
 
@@ -48,6 +60,28 @@ Il comando senza `size` genera soltanto un seme geometrico. La guida completa
 all'ottimizzatore è in [docs/OTTIMIZZAZIONE.md](docs/OTTIMIZZAZIONE.md).
 
 ## Leggere i risultati
+
+Le nuove esecuzioni seguono la struttura del Venturi:
+
+| Cartella | Contenuto |
+|---|---|
+| `00_sintesi` | `RISULTATO.md`, `report.json` |
+| `01_grafici` | `preview.svg` |
+| `02_excel` | `sections.csv` (tabella apribile in Excel, non workbook XLSX) |
+| `03_cad` | STL in mm, superficie OBJ, punti CSV, profili DAT |
+| `04_cfd` | File ParaView, manifest e cartelle delle mappe Cp |
+| `05_convergenza` | `optimization.json` con candidati e verifiche |
+
+Per il comando Cp usare il report in `00_sintesi/report.json`.
+
+Gli STL `ventola_pale_mm.stl` (tutte le pale) e `pala_mm.stl` (una pala)
+sono esportati automaticamente. Impostare millimetri durante l'importazione CAD:
+STL non codifica un'unita standard. Le pale sono chiuse a radice e punta, ma
+sono corpi separati; mozzo e attacchi non sono ancora modellati.
+Si tratta di mesh triangolate senza Cp, non di modelli CAD parametrici.
+`03_cad/STL_info.json` documenta dimensioni, volumi e controlli di chiusura.
+Le descrizioni sotto si riferiscono ai contenuti di queste sottocartelle;
+le esecuzioni precedenti possono conservare la struttura originaria.
 
 Nella cartella dell'esecuzione:
 

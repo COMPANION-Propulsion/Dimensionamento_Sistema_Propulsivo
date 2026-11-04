@@ -7,6 +7,7 @@ from pathlib import Path
 from .optimizer import evaluate
 from .polars import PolarGrid, PolarDomainError
 from .settings import sizing_settings
+from .duty import metric_key, grid_limit_key
 
 
 def rejection_reason(run, cfg):
@@ -21,8 +22,11 @@ def rejection_reason(run, cfg):
         reasons.append(run['verification_error'])
     if run.get('min_constraint',0) < -cfg['constraint_tolerance']:
         reasons.append('Vincolo violato nella griglia di verifica')
-    if max(run.get('thrust_refinement_changes',[0])) >= cfg['max_thrust_grid_change']:
-        reasons.append('Sensibilita della spinta alla griglia superiore alla soglia')
+    pressure = run.get('refinement_metric') == 'total_pressure_rise_Pa'
+    changes = run.get('duty_refinement_changes', run.get('thrust_refinement_changes',[0]))
+    limit = cfg['max_pressure_grid_change' if pressure else 'max_thrust_grid_change']
+    if max(changes) >= limit:
+        reasons.append('Sensibilita della grandezza di progetto alla griglia superiore alla soglia')
     if run.get('coarse_energy_J',0)>run.get('seed_energy_J',float('inf'))*(1+1e-6):
         reasons.append('Energia superiore al seme')
     return '; '.join(reasons) or 'Verifica finale non superata; consultare il report'
@@ -70,10 +74,10 @@ def main():
         try:
             energy, constraints, cases = evaluate(case,design,polar,stations=cfg['stations_final'])
             reference_cases = best.get('verification_grid_cases',best['cases'])
-            changes = [abs(f['thrust_rotor_N']/c['thrust_rotor_N']-1) for c,f in zip(reference_cases,cases)]
-            passed = bool(min(constraints)>=-cfg['constraint_tolerance'] and max(changes)<cfg['max_thrust_grid_change'])
+            changes = [abs(f[metric_key(case)]/c[metric_key(case)]-1) for c,f in zip(reference_cases,cases)]
+            passed = bool(min(constraints)>=-cfg['constraint_tolerance'] and max(changes)<cfg[grid_limit_key(case)])
             verification.update(passed=passed,energy_J=energy,min_constraint=float(min(constraints)),
-                                thrust_change_verification_to_final=changes,
+                                refinement_metric=metric_key(case), duty_change_verification_to_final=changes,
                                 cases=[{k:v for k,v in c.items() if k!='local'} for c in cases])
         except PolarDomainError as exc:
             verification['error'] = str(exc)

@@ -7,6 +7,8 @@ def cell(value):
 
 
 def render_report(report):
+    if report['input_case'].get('design_mode') == 'pressure_flow':
+        return render_pressure_report(report)
     case, best = report['input_case'], report['best']
     rows = ['# Esito del dimensionamento', '',
             'Soluzione accettata nel modello preliminare.' if best else
@@ -60,4 +62,49 @@ def render_report(report):
              'Modello perdite: '+cell(report.get('settings',{}).get('loss_model','none'))+'.',
              'none esclude le perdite; prandtl_free_rotor e una correzione per rotore libero, non per ventola intubata. Il condotto non e modellato.',
              'La convergenza numerica non certifica la prestazione reale o la costruibilita della pala.', '']
+    return '\n'.join(rows)
+
+
+def render_pressure_report(report):
+    case, best = report['input_case'], report['best']
+    rows = ['# Dimensionamento a portata imposta', '',
+        'Candidato accettato nel modello preliminare.' if best else 'Nessun candidato accettato trovato.',
+        f"Diametro esterno imposto: {case['rotor']['outer_diameter_m']:.6g} m.",
+        'La portata e conservata; la velocita sulle pale e Q / area anulare libera.', '',
+        '| Condizione | Q [m3/s] | Delta p totale minimo [Pa] | V disco senza mozzo [m/s] | Durata [s] |',
+        '|---|---:|---:|---:|---:|']
+    for point in case['operating_points']:
+        rows.append(f"| {cell(point['name'])} | {point['volume_flow_m3_s']:.6g} | {point['minimum_total_pressure_rise_Pa']:.6g} | {point['full_disk_velocity_m_s']:.6g} | {point['duration_s']:.6g} |")
+        source = point.get('venturi_source')
+        if source:
+            rows += ['', f"Sorgente {cell(point['name'])}: {cell(source['path'])}.",
+                f"Ciclo dp Venturi convergente: {source['dp_loop_converged']}; studio di griglia affidabile: {source['thrust_grid_reliable']}.",
+                'Questi stati descrivono il calcolo a monte e non sono validati dal dimensionatore della ventola.', '']
+    if best:
+        d = best['design']
+        rows += ['', f"Profilo {cell(d['profile'])}; pale {d['blade_count']}; mozzo {d['hub_diameter_m']:.6g} m.",
+            f"Energia meccanica del ciclo: {best['energy_J']:.6g} J.", '',
+            '| Condizione | Q [m3/s] | Va pale [m/s] | Delta p totale [Pa] | Delta p statica [Pa] | Potenza albero [W] | Coppia [Nm] | rpm |',
+            '|---|---:|---:|---:|---:|---:|---:|---:|']
+        if len(best['cases']) != len(case['operating_points']):
+            raise ValueError('Risultati incompleti.')
+        for point, result in zip(case['operating_points'], best['cases']):
+            keys = ('volume_flow_m3_s','axial_blade_velocity_m_s','total_pressure_rise_Pa',
+                    'static_pressure_rise_Pa','shaft_power_W','torque_Nm','rpm')
+            rows.append('| '+cell(point['name'])+' | '+' | '.join(f'{result[k]:.6g}' for k in keys)+' |')
+        rows += ['', '| Posizione normalizzata | Corda [m] | Calettamento [gradi] |', '|---:|---:|---:|']
+        for s,c,p in zip(d['span_nodes'],d['chord_m'],d['pitch_deg']):
+            rows.append(f'| {s:.6g} | {c:.6g} | {p:.6g} |')
+    rows += ['', '| Profilo | Pale | Esito | Dettaglio |', '|---|---:|---|---|']
+    for run in report['runs']:
+        rows.append(f"| {cell(run['profile'])} | {run['blades']} | {cell(run['status'])} | {cell(run.get('verification_error',run.get('solver_message','')))} |")
+    rows += ['', '## Interpretazione', '',
+        'Pressione totale media pesata sulla portata; include energia cinetica dello swirl in uscita.',
+        'La potenza all’albero comprende il lavoro sul fluido e le perdite di profilo stimate dalle polari.',
+        'Spinta rotorica, potenza nello swirl, perdite e rendimento totale sono nel JSON.',
+        'La forza sul rotore non e la spinta complessiva del sistema Venturi.',
+        'Portata uniforme nell’anello, ingresso senza swirl, densita costante; interazioni di cascata,',
+        'perdite al mozzo/pareti e gioco di punta non modellati. Nessuna verifica accoppiata del condotto con il mozzo.',
+        'Il requisito e soddisfatto nel modello; convergenza e screening non costituiscono validazione sperimentale.',
+        'La ricerca SLSQP e locale; minimo globale non garantito.', '']
     return '\n'.join(rows)

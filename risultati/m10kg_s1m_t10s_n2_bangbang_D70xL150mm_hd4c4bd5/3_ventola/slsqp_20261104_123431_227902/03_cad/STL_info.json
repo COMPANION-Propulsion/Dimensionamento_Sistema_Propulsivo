@@ -1,0 +1,22 @@
+{
+  "units": "mm",
+  "axis": "Z",
+  "blade_count": 4,
+  "triangles_per_blade": 8046,
+  "closed_shells": 4,
+  "blade_volume_mm3": 230.37930634130703,
+  "diameter_mm": 58.13441983892299,
+  "bounds_mm": [
+    [
+      -29.067209911950734,
+      -29.067209911950734,
+      -2.2960188237946464
+    ],
+    [
+      29.067209911950734,
+      29.067209911950734,
+      6.795495976798994
+    ]
+  ],
+  "limitations": "Pale separate chiuse a radice e punta. Mozzo e attacchi non modellati. Mesh triangolata, non CAD parametrico. Nessun campo Cp."
+}

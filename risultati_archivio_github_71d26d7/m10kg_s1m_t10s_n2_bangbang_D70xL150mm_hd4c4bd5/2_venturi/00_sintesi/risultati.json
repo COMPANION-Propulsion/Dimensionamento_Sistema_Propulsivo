@@ -1,0 +1,61 @@
+{
+ "ventola": {
+  "dp_disk_Pa": 38.111962622515875,
+  "dp_errore_Pa": 0.010689696527915963,
+  "D_ventola_m": 0.058125826469508104,
+  "z_centro_ventola_m": 0.0175,
+  "L_ventola_m": 0.01,
+  "portata_m3_s": 0.02138734565450713,
+  "portata_massica_kg_s": 0.025750364168026584,
+  "V_disco_m_s": 8.059882768406263,
+  "potenza_fluido_W": 0.8151137181794031,
+  "densita_kg_m3": 1.204,
+  "V0_m_s": 0.0,
+  "nota": "z misurato dal piano d'ingresso del condotto (inizio della parete bagnata, dopo la bocca d'imbocco)"
+ },
+ "spinta": {
+  "richiesta_N": 0.2,
+  "sorgente": "risultati\\m10kg_s1m_t10s_n2_bangbang_D70xL150mm_hd4c4bd5\\1_spinta\\spinta.json",
+  "calcolata_N": 0.2000002942673366,
+  "da_bilancio_forze_N": 0.19750152694203815,
+  "errore_griglia_N": 5.6671410853456616e-05,
+  "errore_griglia_pct": 0.02834565084622753,
+  "estrapolata_N": 0.1999298275453037,
+  "affidabile": true,
+  "problemi": "-",
+  "spinta_su_potenza_N_W": 0.245364897936017
+ },
+ "geometria": {
+  "D_ingresso_m": 0.05960287524550578,
+  "D_ventola_m": 0.058125826469508104,
+  "D_uscita_m": 0.060000000000000005,
+  "L_condotto_m": 0.04068564835011784,
+  "rapporto_aree_uscita_disco": 1.0655264104648539,
+  "D_esterno_tubo_mm": 69.99982173327484,
+  "L_tubo_mm": 50.40650239699049,
+  "D_esterno_max_mm": 70.0,
+  "L_max_mm": 150.0,
+  "D_interno_max_mm": 60.00000000000001,
+  "spessore_parete_mm": 2.0,
+  "ingombro_rispettato": true
+ },
+ "flusso": {
+  "mach_max": 0.027720360554446773,
+  "celle_flusso_invertito": 292,
+  "margine_separazione": 0.06541914941813806,
+  "salto_p0_disco_Pa": 37.61834872516663,
+  "y_plus_max": 0.31025906518102736,
+  "V_getto_ideale_m_s": 7.956689513285266,
+  "V_uscita_media_m_s": 7.564226178955059
+ },
+ "numerica": {
+  "griglia": "180x72",
+  "turbolenza": "baldwin_lomax",
+  "griglie_studio": "180x72, 128x51, 90x36",
+  "esponente_T_dp": 1.010607160587863,
+  "ciclo_dp_convergito": true,
+  "STL_chiusi": true,
+  "triangoli_tubo": 61664,
+  "triangoli_fluido": 45632
+ }
+}

@@ -1,0 +1,300 @@
+
+ ===================================================
+  XFOIL Version 6.99
+  Copyright (C) 2000   Mark Drela, Harold Youngren
+
+  This software comes with ABSOLUTELY NO WARRANTY,
+    subject to the GNU General Public License.
+
+  Caveat computor
+ ===================================================
+
+ File  xfoil.def  not found
+
+   QUIT    Exit program
+
+  .OPER    Direct operating point(s)
+  .MDES    Complex mapping design routine
+  .QDES    Surface speed design routine
+  .GDES    Geometry design routine
+
+   SAVE f  Write airfoil to labeled coordinate file
+   PSAV f  Write airfoil to plain coordinate file
+   ISAV f  Write airfoil to ISES coordinate file
+   MSAV f  Write airfoil to MSES coordinate file
+   REVE    Reverse written-airfoil node ordering
+
+   LOAD f  Read buffer airfoil from coordinate file
+   NACA i  Set NACA 4,5-digit airfoil and buffer airfoil
+   INTE    Set buffer airfoil by interpolating two airfoils
+   NORM    Buffer airfoil normalization toggle
+   XYCM rr Change CM reference location, currently  0.25000 0.00000
+
+   BEND    Display structural properties of current airfoil
+
+   PCOP    Set current-airfoil panel nodes directly from buffer airfoil points
+   PANE    Set current-airfoil panel nodes ( 160 ) based on curvature
+  .PPAR    Show/change paneling
+
+  .PLOP    Plotting options
+
+   WDEF f  Write  current-settings file
+   RDEF f  Reread current-settings file
+   NAME s  Specify new airfoil name
+   NINC    Increment name version number
+
+   Z       Zoom    | (available in all menus)
+   U       Unzoom  | 
+
+ XFOIL   c>   ...............................................
+
+  G raphics-enable flag:        T
+  S ize of plot object          10.00"
+  A spect ratio of plot object   0.5500
+  P age dimensions              11.00 x  8.50"
+  M argins from page edges       0.00",  0.00"
+  F ont size (relative)          0.0150
+  W indow/screen size fraction   0.8000
+  B lowup input method:        Cursor    
+  O rientation of plot:        Landscape 
+  C olor PostScript output?     F
+
+      Option, Value   (or <Return>)    c>   ...............................................
+
+  G raphics-enable flag:        F
+  S ize of plot object          10.00"
+  A spect ratio of plot object   0.5500
+  P age dimensions              11.00 x  8.50"
+  M argins from page edges       0.00",  0.00"
+  F ont size (relative)          0.0150
+  W indow/screen size fraction   0.8000
+  B lowup input method:        Cursor    
+  O rientation of plot:        Landscape 
+  C olor PostScript output?     F
+
+      Option, Value   (or <Return>)    c>  
+ XFOIL   c>  
+ Labeled airfoil file.  Name:  NACA4412                                        
+
+ Number of input coordinate points: 161
+ Counterclockwise ordering
+ Max thickness =     0.120203  at x =   0.294
+ Max camber    =     0.038164  at x =   0.422
+
+  LE  x,y  =  -0.00030   0.00309  |   Chord =   1.00030
+  TE  x,y  =   1.00000   0.00000  |
+
+ Current airfoil nodes set from buffer airfoil nodes ( 161 )
+
+ XFOIL   c>  
+ Blunt trailing edge.  Gap =  0.00252
+
+ Paneling parameters used...
+   Number of panel nodes       160
+   Panel bunching parameter    1.000
+   TE/LE panel density ratio   0.150
+   Refined-area/LE panel density ratio    0.200
+   Top    side refined area x/c limits  1.000 1.000
+   Bottom side refined area x/c limits  1.000 1.000
+
+ XFOIL   c>  
+ XFOIL   c>  
+.OPERi   c>  
+ M  =    0.0000
+ Re =     13204
+
+.OPERv   c>  
+ Sonic Cp =   -327.84      Sonic Q/Qinf =    20.155
+
+
+.OPERv   c>  
+ Xtr/c     =  1.0000    top    side
+ Xtr/c     =  1.0000    bottom side
+ Ncrit     =    9.00   ( 0.070 % turb. level )
+ Vacc      =  0.0100
+
+ Klag  =  5.6000     Uxwt  =    1.00
+ A     =  6.7000     B     =  0.7500       KCt = 0.01485
+ CtiniK=  1.8000     CtiniX=  3.3000
+
+..VPAR   c>  
+..VPAR   c>  
+.OPERv   c>  
+.OPERv   c>  
+ Polar  1 newly created for accumulation
+ Airfoil archived with polar: NACA4412                                        
+
+Enter  polar save filename  OR  <return> for no file   s>  
+ New polar save file available
+
+Enter  polar dump filename  OR  <return> for no file   s>  
+ Polar dump file will NOT be written
+
+ Polar accumulation enabled
+
+.OPERva   c>   Calculating unit vorticity distributions ...
+ Calculating wake trajectory ...
+ Calculating source influence matrix ...
+
+ Solving BL system ...
+
+ Initializing BL ...
+    side            1  ...
+ MRCHUE: Inverse mode at  48     Hk =   3.922
+ MRCHUE: Inverse mode at  49     Hk =   4.058
+ MRCHUE: Inverse mode at  50     Hk =   4.191
+ MRCHUE: Inverse mode at  51     Hk =   4.321
+ MRCHUE: Inverse mode at  52     Hk =   4.449
+ MRCHUE: Inverse mode at  53     Hk =   4.574
+ MRCHUE: Inverse mode at  54     Hk =   4.697
+ MRCHUE: Inverse mode at  55     Hk =   4.820
+ MRCHUE: Inverse mode at  56     Hk =   4.941
+ MRCHUE: Inverse mode at  57     Hk =   5.059
+ MRCHUE: Convergence failed at  58  side 1    Res =  0.1186E+01
+ MRCHUE: Inverse mode at  59     Hk =   5.175
+ MRCHUE: Inverse mode at  60     Hk =   5.288
+ MRCHUE: Inverse mode at  61     Hk =   5.400
+ MRCHUE: Inverse mode at  62     Hk =   5.510
+ MRCHUE: Inverse mode at  63     Hk =   5.619
+ MRCHUE: Inverse mode at  64     Hk =   5.726
+ MRCHUE: Convergence failed at  65  side 1    Res =  0.1984E+01
+ MRCHUE: Inverse mode at  66     Hk =   5.831
+ MRCHUE: Inverse mode at  67     Hk =   5.934
+ MRCHUE: Inverse mode at  68     Hk =   6.036
+ MRCHUE: Inverse mode at  69     Hk =   6.137
+ MRCHUE: Inverse mode at  70     Hk =   6.236
+ MRCHUE: Inverse mode at  71     Hk =   6.335
+ MRCHUE: Inverse mode at  72     Hk =   6.432
+ MRCHUE: Inverse mode at  73     Hk =   6.528
+ MRCHUE: Inverse mode at  74     Hk =   6.624
+ MRCHUE: Inverse mode at  75     Hk =   6.718
+ MRCHUE: Inverse mode at  76     Hk =   6.812
+ MRCHUE: Inverse mode at  77     Hk =   6.904
+ MRCHUE: Inverse mode at  78     Hk =   6.996
+ MRCHUE: Inverse mode at  79     Hk =   7.087
+ MRCHUE: Inverse mode at  80     Hk =   7.177
+ MRCHUE: Inverse mode at  81     Hk =   7.266
+ MRCHUE: Inverse mode at  82     Hk =   7.355
+ MRCHUE: Inverse mode at  83     Hk =   7.442
+ MRCHUE: Inverse mode at  84     Hk =   7.529
+ MRCHUE: Inverse mode at  85     Hk =   7.615
+ MRCHUE: Inverse mode at  86     Hk =   7.699
+ MRCHUE: Inverse mode at  87     Hk =   7.781
+ MRCHUE: Inverse mode at  88     Hk =   7.859
+ MRCHUE: Inverse mode at  89     Hk =   7.932
+ MRCHUE: Inverse mode at  90     Hk =   7.997
+ MRCHUE: Inverse mode at  91     Hk =   8.052
+ MRCHUE: Inverse mode at  92     Hk =   8.084
+    side            2  ...
+ MRCHUE: Inverse mode at  68     Hk =   3.800
+ MRCHUE: Inverse mode at  69     Hk =   3.855
+ MRCHUE: Inverse mode at  70     Hk =   3.885
+ MRCHUE: Inverse mode at  72     Hk =   4.969
+ MRCHUE: Inverse mode at  73     Hk =   4.324
+ MRCHUE: Inverse mode at  74     Hk =   3.860
+ MRCHUE: Inverse mode at  75     Hk =   3.507
+ MRCHUE: Inverse mode at  76     Hk =   3.227
+ MRCHUE: Inverse mode at  77     Hk =   2.997
+
+ Side 1 forced transition at x/c =  1.0002   92
+ Side 2 forced transition at x/c =  0.9998   70
+ idif Ue xi dudx           1  0.11148177      2.91609764E-03   38.229778    
+ Uenew xinew           2  2.97594606E-03  7.78436661E-05
+
+   1   rms: 0.1189E+01   max: 0.5843E+01   D at   78  2   RLX: 0.130
+       a =  6.342      CL =  1.4162
+      Cm = -0.2550     CD =  0.01156   =>   CDf =  0.01660    CDp = -0.00504
+
+ Side 1 forced transition at x/c =  1.0002   91
+ Side 2 forced transition at x/c =  0.9998   71
+
+   2   rms: 0.1235E+01   max: -.1576E+02   T at    2  2   RLX: 0.032
+       a =  6.342      CL =  1.3841
+      Cm = -0.2476     CD =  0.01237   =>   CDf =  0.01745    CDp = -0.00508
+
+ Side 1 forced transition at x/c =  1.0002   91
+ Side 2 forced transition at x/c =  0.9998   71
+
+   3   rms: 0.8375E+00   max: 0.3879E+01   D at   79  2   RLX: 0.136
+       a =  6.342      CL =  1.2570
+      Cm = -0.2211     CD =  0.01518   =>   CDf =  0.01771    CDp = -0.00252
+
+ Side 1 forced transition at x/c =  1.0002   91
+ Side 2 forced transition at x/c =  0.9998   71
+ idif Ue xi dudx           1  0.16711554      3.66330147E-03   45.618832    
+ Uenew xinew           2  4.67249155E-02  1.02424622E-03
+
+   4   rms: 0.6869E+00   max: 0.3023E+01   D at   81  2   RLX: 0.168
+       a =  6.342      CL =  1.1321
+      Cm = -0.1946     CD =  0.01939   =>   CDf =  0.01946    CDp = -0.00007
+
+ Side 1 forced transition at x/c =  1.0002   90
+ Side 2 forced transition at x/c =  0.9998   72
+ idif Ue xi dudx           1  0.13609518      2.72560120E-03   49.932171    
+ Uenew xinew           2  1.27619002E-02  2.55584717E-04
+
+   5   rms: 0.5774E+00   max: 0.2441E+01   D at   84  2   RLX: 0.230
+       a =  6.342      CL =  0.9900
+      Cm = -0.1650     CD =  0.02610   =>   CDf =  0.02031    CDp =  0.00579
+
+ Side 1 forced transition at x/c =  1.0002   89
+ Side 2 forced transition at x/c =  0.9998   73
+
+   6   rms: 0.4874E+00   max: -.2344E+01   T at    2  2   RLX: 0.213
+       a =  6.342      CL =  0.8801
+      Cm = -0.1426     CD =  0.03373   =>   CDf =  0.02031    CDp =  0.01342
+
+ Side 1 forced transition at x/c =  1.0002   89
+ Side 2 forced transition at x/c =  0.9998   73
+ idif Ue xi dudx           2  0.27787670      4.65524197E-03   59.691139    
+ Uenew xinew           3  0.13895614      2.32791901E-03
+
+   7   rms: 0.3874E+00   max: 0.1506E+01   D at   88  2   RLX: 0.593
+       a =  6.342      CL =  0.6242
+      Cm = -0.0919     CD =  0.05255   =>   CDf =  0.02216    CDp =  0.03039
+
+ Side 1 forced transition at x/c =  1.0002   87
+ Side 2 forced transition at x/c =  0.9998   75
+
+   8   rms: 0.2283E+00   max: -.2326E+01   T at    2  2   RLX: 0.215
+       a =  6.342      CL =  0.5756
+      Cm = -0.0823     CD =  0.06220   =>   CDf =  0.02134    CDp =  0.04086
+
+ Side 1 forced transition at x/c =  1.0002   87
+ Side 2 forced transition at x/c =  0.9998   75
+ idif Ue xi dudx           1  0.19613820      2.74527073E-03   71.445854    
+ Uenew xinew           2  4.60174009E-02  6.44087791E-04
+
+   9   rms: 0.1475E+00   max: 0.4949E+00   D at   88  2
+       a =  6.342      CL =  0.4042
+      Cm = -0.0508     CD =  0.08030   =>   CDf =  0.02196    CDp =  0.05833
+
+ Side 1 forced transition at x/c =  1.0002   86
+ Side 2 forced transition at x/c =  0.9998   76
+
+  10   rms: 0.5100E-02   max: 0.5836E-01   D at   89  2
+       a =  6.342      CL =  0.4038
+      Cm = -0.0508     CD =  0.08062   =>   CDf =  0.02116    CDp =  0.05946
+
+ Side 1 forced transition at x/c =  1.0002   86
+ Side 2 forced transition at x/c =  0.9998   76
+
+  11   rms: 0.5473E-03   max: -.6839E-02   D at    3  2
+       a =  6.342      CL =  0.4039
+      Cm = -0.0508     CD =  0.08055   =>   CDf =  0.02113    CDp =  0.05942
+
+ Side 1 forced transition at x/c =  1.0002   86
+ Side 2 forced transition at x/c =  0.9998   76
+
+  12   rms: 0.1811E-05   max: -.1883E-04   D at    3  1
+       a =  6.342      CL =  0.4039
+      Cm = -0.0508     CD =  0.08055   =>   CDf =  0.02113    CDp =  0.05942
+ plradd ia,ip,cpol            1          85  8.45158026E-02
+
+ Point added to stored polar  1
+ Point written to save file  polar.dat                                       
+ Dump file unspecified or not available
+
+.OPERva   c>  
+.OPERva   c>  
+ XFOIL   c>  

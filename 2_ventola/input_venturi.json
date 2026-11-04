@@ -1,0 +1,29 @@
+{
+  "description": "Importazione automatica dell'export Venturi piu recente in ../risultati. Aria, durata e limiti sono impostazioni modificabili.",
+  "design_mode": "pressure_flow",
+  "velocity_reference": "full_disk_flow",
+  "air": {
+    "temperature_K": 293.15,
+    "static_pressure_Pa": 101325.0,
+    "relative_humidity": null
+  },
+  "rotor": {
+    "hub_diameter_bounds_m": [0.012, 0.024],
+    "blade_count_candidates": [2, 3, 4, 5, 6, 7, 8],
+    "airfoil_candidates": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
+    "profile_constant_along_span": true,
+    "shaft_speed_bounds_rpm": [5000.0, 30000.0]
+  },
+  "operating_points": [
+    {
+      "name": "venturi",
+      "venturi_result": "auto",
+      "duration_s": 1.0
+    }
+  ],
+  "sizing": {
+    "loss_model": "none",
+    "pressure_numerical_margin": 0.002,
+    "max_pressure_grid_change": 0.01
+  }
+}

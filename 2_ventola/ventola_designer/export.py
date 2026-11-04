@@ -48,6 +48,8 @@ def export_geometry(directory, case, design, sections, catalog):
     }
     (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     (out / "preview.svg").write_text(preview(design, sections, catalog), encoding="utf-8")
+    from .stl_export import export_stl
+    export_stl(out, design)
 
 
 def preview(design, sections, catalog):

@@ -3,6 +3,7 @@ from copy import deepcopy
 import math
 
 DEFAULTS = {
+    'pressure_numerical_margin':.002, 'max_pressure_grid_change':.01,
     'geometry_stations':65, 'minimum_section_thickness_m':0., 'minimum_circumferential_gap_m':0.,
     'loss_model':'none',
     'chord_over_D_bounds':[.04,.22], 'pitch_deg_bounds':[0.,45.],
@@ -43,11 +44,11 @@ def sizing_settings(case):
     for key in ('minimum_section_thickness_m','minimum_circumferential_gap_m'):
         if type(cfg[key]) not in (int,float) or not math.isfinite(cfg[key]) or cfg[key]<0:
             raise ValueError(f'{key}: richiesto valore finito non negativo in metri.')
-    for key in ('max_solidity','max_Mach','ftol','finite_difference_step','constraint_tolerance','max_thrust_grid_change','thrust_numerical_margin'):
+    for key in ('max_solidity','max_Mach','ftol','finite_difference_step','constraint_tolerance','max_thrust_grid_change','thrust_numerical_margin','pressure_numerical_margin','max_pressure_grid_change'):
         v=cfg[key]
-        if type(v) not in (int,float) or not math.isfinite(v) or (v<0 if key=='thrust_numerical_margin' else v<=0):
+        if type(v) not in (int,float) or not math.isfinite(v) or (v<0 if key.endswith('_numerical_margin') else v<=0):
             raise ValueError(f'{key}: valore non valido.')
-    if cfg['max_Mach']>=1 or cfg['finite_difference_step']>=1 or cfg['max_thrust_grid_change']>=1:
+    if cfg['max_Mach']>=1 or cfg['finite_difference_step']>=1 or cfg['max_thrust_grid_change']>=1 or cfg['max_pressure_grid_change']>=1:
         raise ValueError('Mach, passo normalizzato e variazione di griglia devono essere < 1.')
     if cfg['constraint_tolerance']>=1e-2 or cfg['ftol']>=1e-2:
         raise ValueError('Tolleranze numeriche richieste < 0.01.')
