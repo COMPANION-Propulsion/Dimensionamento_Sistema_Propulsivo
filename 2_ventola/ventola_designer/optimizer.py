@@ -189,7 +189,9 @@ def default_output_directory(case):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--input',type=Path,default=Path(__file__).resolve().parents[1]/'input_venturi.json')
+    parser.add_argument('--input',type=Path,required=True,
+                        help='Input JSON della ventola; nella catena lo scrive run_sistema.py '
+                             'in risultati/<caso>/input_ventola.json.')
     parser.add_argument('--profiles',nargs='+')
     parser.add_argument('--blades',nargs='+',type=int)
     parser.add_argument('--maxiter',type=int)
@@ -263,12 +265,13 @@ def main(argv=None):
         best['design']['status'] = 'SLSQP_final_verified_preliminary'
         (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
         export_geometry(out,case,best['design'],blade_sections(best['design']),load_catalog())
+        from .cad_export import export_cad
+        print('CAD della ventola (STEP e STL, versioni A e speculare)...', flush=True)
+        report['cad'] = export_cad(out,case,best['design'])
         # L'export geometrico ha metadati per il vecchio seme: sostituirli col report effettivo.
         (out/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
         svg = (out/'preview.svg').read_text(encoding='utf-8').replace('geometria iniziale','geometria SLSQP').replace('Non ottimizzata — spinta e potenza ancora da calcolare','Ottimizzazione locale BEMT — modello preliminare')
         (out/'preview.svg').write_text(svg,encoding='utf-8')
-        obj = out/'blade_surface.obj'
-        obj.write_text(obj.read_text(encoding='utf-8').replace('Initial blade surface','SLSQP blade surface'),encoding='utf-8')
     report['paraview'] = export_paraview_results(out, case, report['runs'], report['best'])
     from .reporting import render_report
     (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')

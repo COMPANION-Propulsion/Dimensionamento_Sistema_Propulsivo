@@ -137,12 +137,12 @@ class PressureFlowTests(unittest.TestCase):
                 code = main(['--input',str(path),'--profiles','NACA4412','--blades','2',
                              '--output',str(folder/'output')])
             self.assertEqual(code, 0)
-            saved = json.loads((folder/'output/report.json').read_text())
+            saved = json.loads((folder/'output/00_sintesi/report.json').read_text())
             self.assertEqual(saved['input_case']['design_mode'], 'pressure_flow')
             self.assertAlmostEqual(saved['best']['cases'][0]['volume_flow_m3_s'], .03)
             datasets = saved['paraview']['datasets']
             self.assertEqual(len(datasets), 1)
-            xml = ET.parse(folder/'output/paraview'/datasets[0]['file'])
+            xml = ET.parse(folder/'output/04_cfd'/datasets[0]['file'])
             names = {node.get('Name') for node in xml.iter('DataArray')}
             self.assertIn('total_pressure_rise_Pa', names)
             self.assertIn('volume_flow_m3_s', names)

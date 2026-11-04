@@ -11,7 +11,8 @@ from . import paraview
 from .cad import tube_envelope
 
 
-def export_pointcloud(mesh, uz, ur, p, out_dir: str, n_angles: int = 8) -> Tuple[str, str]:
+def export_pointcloud(mesh, uz, ur, p, out_dir: str, n_angles: int = 8,
+                      ply: bool = True) -> Tuple[str, str]:
     """Cell centres copied at n_angles angles around the axis.
 
     Columns: x (axial), y, z, pressure, speed. Returns (ply_path, csv_path);
@@ -33,7 +34,7 @@ def export_pointcloud(mesh, uz, ur, p, out_dir: str, n_angles: int = 8) -> Tuple
     np.savetxt(csv_path, data, delimiter=",", fmt="%.10g",
                header="x,y,z,pressure,velocity_magnitude", comments="")
 
-    if paraview.pv is None:
+    if not ply or paraview.pv is None:
         return "", csv_path
     cloud = paraview.pv.PolyData(data[:, :3])
     cloud.point_data["Pressure"] = p_all

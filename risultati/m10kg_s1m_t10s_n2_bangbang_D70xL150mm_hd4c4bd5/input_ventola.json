@@ -1,0 +1,49 @@
+{
+  "description": "Written by run_sistema.py from VENTOLA of input.py.",
+  "design_mode": "pressure_flow",
+  "velocity_reference": "full_disk_flow",
+  "air": {
+    "temperature_K": 293.15,
+    "static_pressure_Pa": 101325.0,
+    "relative_humidity": null
+  },
+  "rotor": {
+    "hub_diameter_bounds_m": [
+      0.012,
+      0.024
+    ],
+    "blade_count_candidates": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "airfoil_candidates": [
+      "NACA0012",
+      "NACA2412",
+      "NACA4412",
+      "NACA4415"
+    ],
+    "profile_constant_along_span": true,
+    "shaft_speed_bounds_rpm": [
+      5000.0,
+      30000.0
+    ]
+  },
+  "operating_points": [
+    {
+      "name": "venturi",
+      "venturi_result": "X:\\Progetti\\Software\\Companion-Propulsion\\Dimensionamento_Sistema_Propulsivo\\risultati\\m10kg_s1m_t10s_n2_bangbang_D70xL150mm_hd4c4bd5\\2_venturi\\00_sintesi\\risultati.json",
+      "duration_s": 1.0
+    }
+  ],
+  "sizing": {
+    "loss_model": "none"
+  },
+  "cad": {
+    "tip_clearance_m": 0.0005
+  }
+}

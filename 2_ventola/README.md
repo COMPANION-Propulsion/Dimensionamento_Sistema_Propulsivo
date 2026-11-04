@@ -1,118 +1,77 @@
-# Dimensionamento preliminare della ventola
+# 2_ventola: dimensionamento della ventola
 
-Nella catena completa la ventola si lancia con `python run_sistema.py` dalla
-radice del progetto: le impostazioni stanno in `VENTOLA` di `input.py`, i
-risultati in `risultati/<caso>/3_ventola/`. Per un uso separato partire da [input_venturi.json](input_venturi.json):
-il campo `venturi_result: "auto"` seleziona l'export Venturi piu recente disponibile.
-Avviare dalla cartella `2_ventola` con
-`.\.venv\Scripts\python.exe -m ventola_designer size`.
-Diametro, pressione totale assiale (swirl escluso), portata e
-densità vengono importati; la velocità sulle pale è ricalcolata sull'area libera
-del mozzo. Guida: [input dal Venturi](docs/VENTURI_INPUT.md).
+Dal Δp, dal diametro e dalla portata del Venturi la ventola trova profilo, numero
+di pale, mozzo, corde, calettamenti e giri con la minima potenza all'albero
+(BEMT a portata imposta + SLSQP). Poi calcola la curva spinta–potenza e scrive
+il CAD pronto per CAD e CFD.
 
-Le istruzioni seguenti per `input_esempio.json` riguardano il precedente modo a
-spinta del rotore libero, mantenuto per compatibilità.
-`input_esempio.json` contiene i requisiti modificabili dall'utilizzatore.
-I valori inclusi sono dimostrativi. Il dimensionatore genera la geometria delle
-pale e cerca con SLSQP un candidato che rispetti la spinta minima in tutte le
-condizioni, minimizzando l'energia meccanica del ciclo con il modello BEMT.
+## Come si usa
 
-## Dove trovare i file
+Nella catena completa, dalla radice del progetto:
 
-| Percorso | Contenuto e utilizzo |
+```powershell
+python run_sistema.py
+```
+
+Le impostazioni stanno in `VENTOLA` di `input.py`. `run_sistema.py` scrive
+l'input della ventola in `risultati/<caso>/input_ventola.json`, con il percorso
+del Venturi dello stesso caso, e i risultati in `risultati/<caso>/3_ventola/`.
+
+Da sola, dalla cartella `2_ventola`, con un input JSON nello stesso formato:
+
+```powershell
+python -m ventola_designer size --input PERCORSO.json [--jobs N] [--output CARTELLA]
+python -m unittest discover -s tests
+```
+
+`--jobs N`: coppie profilo/pale in parallelo (default: tutti i core). Senza
+`--output` i risultati vanno nel `3_ventola/` del caso Venturi importato, o in
+una cartella datata di `ventola_output/` se l'input non viene da un caso.
+
+## Cartelle
+
+| Percorso | Contenuto |
 |---|---|
-| [input_esempio.json](input_esempio.json) | Diametro, spinte minime, condizioni dell'aria, velocità, durate e limiti di ricerca |
-| [docs/](docs/README.md) | Guida operativa, risultati e documenti del piano |
-| `ventola_designer/` | Codice Python: modello, geometria, ottimizzatore ed esportazioni |
-| `ventola_designer/airfoils/` | Catalogo e dati aerodinamici usati dal codice |
-| `tests/` | Test automatici del software |
-| `ventola_output/` | Risultati delle esecuzioni manuali fuori da un caso, in cartelle datate |
+| `ventola_designer/` | codice: BEMT, geometria, ottimizzatore, CAD, curva di potenza, export |
+| `ventola_designer/airfoils/` | catalogo dei profili e polari NeuralFoil (Re 2 000–150 000) |
+| `tests/` | test automatici |
+| `docs/` | guide: [input dal Venturi](docs/VENTURI_INPUT.md), [ottimizzazione](docs/OTTIMIZZAZIONE.md), [mappa Cp](docs/CP_MAP.md) |
 | `tools/xfoil/` | XFOIL 6.99 per Windows (GPL), usato dalla mappa di Cp |
-| [archivio/](archivio/README.md) | Backup e istruzioni storiche conservati |
-| `.venv/` | Ambiente Python locale del progetto |
-| [requirements-polars.txt](requirements-polars.txt) | Dipendenze per la generazione delle polari |
+| `input_esempio.json` | caso del vecchio modo "rotore libero" (spinta imposta), usato dai test |
+| `ventola_output/` | esecuzioni manuali fuori da un caso |
 
-## Avvio da PowerShell
+Le dipendenze sono in `../requirements.txt`.
 
-Eseguire questi comandi dalla cartella `2_ventola`, usando l'ambiente già presente.
-Il controllo dell'input non avvia il dimensionamento:
-
-```powershell
-.\.venv\Scripts\python.exe -m ventola_designer size --input input_esempio.json --validate-only
-```
-
-Per avviare il dimensionamento con i requisiti del file:
-
-```powershell
-.\.venv\Scripts\python.exe -m ventola_designer size --input input_esempio.json
-```
-
-Per usare un altro file, sostituire il percorso dopo `--input`. `--output` permette
-di scegliere una nuova cartella di destinazione; altrimenti il programma crea
-`risultati/<caso>/3_ventola/` (riscritta a ogni esecuzione) se tutti i punti
-provengono dallo stesso caso Venturi nella struttura standard. Negli altri casi
-crea una cartella datata in `2_ventola/ventola_output/`. `--jobs N` fissa quante
-coppie profilo/pale girano in parallelo (default: tutti i core).
-
-Per verificare il software:
-
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests
-```
-
-Il comando senza `size` genera soltanto un seme geometrico. La guida completa
-all'ottimizzatore è in [docs/OTTIMIZZAZIONE.md](docs/OTTIMIZZAZIONE.md).
-
-## Leggere i risultati
-
-Le nuove esecuzioni seguono la struttura del Venturi:
+## Risultati (`risultati/<caso>/3_ventola/`)
 
 | Cartella | Contenuto |
 |---|---|
-| `00_sintesi` | `RISULTATO.md`, `report.json` |
-| `01_grafici` | `preview.svg` |
-| `02_excel` | `sections.csv` (tabella apribile in Excel, non workbook XLSX) |
-| `03_cad` | STL in mm, superficie OBJ, punti CSV, profili DAT |
-| `04_cfd` | File ParaView, manifest e cartelle delle mappe Cp |
-| `05_convergenza` | `optimization.json` con candidati e verifiche |
+| `00_sintesi` | `RISULTATO.md` (da leggere per primo), `report.json`, `curva_potenza.json` |
+| `01_grafici` | `preview.svg` (pala), `curva_potenza.svg` (spinta dell'ugello da 0 a P_max) |
+| `02_excel` | `sections.csv` (corda e calettamento per raggio), `curva_potenza.xlsx` |
+| `03_cad` | `ventola_A` e `ventola_B_speculare` (mozzo + pale, STEP e STL), `pala`, `CAD_info.json`, `blade_points.csv`, profilo `.dat` |
+| `04_cfd` | file ParaView delle grandezze radiali BEMT, mappe di Cp |
+| `05_convergenza` | `optimization.json`: tutti i candidati e le verifiche |
 
-Per il comando Cp usare il report in `00_sintesi/report.json`.
+**CAD.** Solidi validi in mm, nel riferimento del condotto: asse X lungo il
+flusso, x = 0 al piano d'ingresso del condotto, ventola già al suo posto. Si
+importano insieme a `2_venturi/03_cad/tubo` e `fluido` senza spostamenti. Il
+diametro delle pale è ridotto del gioco di punta (`VENTOLA["gioco_punta_m"]`).
+`ventola_A` gira in senso orario vista da valle, `ventola_B_speculare` in senso
+antiorario: montate su ugelli vicini, i momenti di reazione si annullano.
 
-Gli STL `ventola_pale_mm.stl` (tutte le pale) e `pala_mm.stl` (una pala)
-sono esportati automaticamente. Impostare millimetri durante l'importazione CAD:
-STL non codifica un'unita standard. Le pale sono chiuse a radice e punta, ma
-sono corpi separati; mozzo e attacchi non sono ancora modellati.
-Si tratta di mesh triangolate senza Cp, non di modelli CAD parametrici.
-`03_cad/STL_info.json` documenta dimensioni, volumi e controlli di chiusura.
-Le descrizioni sotto si riferiscono ai contenuti di queste sottocartelle;
-le esecuzioni precedenti possono conservare la struttura originaria.
+**Curva di potenza.** Condotto e pale fissi, giri variabili: per ogni regime si
+trova dove la ventola e il condotto danno lo stesso Δp. Si leggono la spinta
+dell'ugello (tubo + pale) e quella sulle sole pale, da 0 a `VENTOLA["potenza_max_W"]`
+(None = il doppio della potenza di progetto).
 
-Nella cartella dell'esecuzione:
+## Modello e limiti
 
-- `RISULTATO.md`: riepilogo leggibile ed esito dei candidati.
-- `optimization.json` e `report.json`: input, impostazioni e diagnostica numerica.
-- `sections.csv`, `blade_points.csv`, `blade_surface.obj`, `preview.svg` e file
-  `.dat`: geometria del candidato selezionato, quando presente.
-- `paraview/`: geometria VTP e risultati radiali BEMT; dettagli nella
-  [guida ai file ParaView](docs/README.md#paraview).
-
-Le cartelle di risultati precedenti agli ultimi aggiornamenti possono avere
-meno file. Un risultato privo di candidati accettati resta un esito documentato:
-non dimostra l'impossibilità fisica di soddisfare i requisiti.
-
-## Perimetro attuale
-
-Modello preliminare del solo rotore, indipendente dal Venturi. Il diametro è
-imposto; mozzo, corde, calettamenti e regimi sono variabili del dimensionamento.
-La velocità assiale in input è riferita alla corrente lontano a monte.
-La ricerca è locale e non garantisce un minimo globale.
-
-Condotto, CFD, verifiche strutturali e degli attacchi, motore ed elettronica
-sono fuori dall'ambito attuale. La validazione sperimentale delle polari è
-in pausa per decisione dell'utente. Le polari attuali sono numeriche.
-I controlli geometrici del codice restano screening dimensionali.
-
-Il riordino conserva i percorsi operativi di input, codice e risultati.
-I documenti `BLOCCO_*` descrivono l'evoluzione del piano e possono contenere
-stati precedenti: per l'utilizzo corrente fare riferimento a questo README
-e alla guida all'ottimizzatore.
+- Requisito sul Δp **assiale** (swirl escluso), lo stesso del disco del Venturi:
+  senza statore lo swirl esce col getto e non dà spinta.
+- Velocità uniforme sull'anello libero dal mozzo, ingresso senza swirl, densità
+  costante. Perdite al mozzo, alle pareti e di gioco di punta non modellate.
+- Polari numeriche NeuralFoil, non validate sperimentalmente. Ricerca SLSQP
+  locale: il minimo globale non è garantito.
+- Il modo storico a spinta del rotore libero (`input_esempio.json`) resta per i
+  test e per confronto; nella catena si usa solo `pressure_flow`.

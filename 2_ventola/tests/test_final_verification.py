@@ -77,11 +77,11 @@ class FinalVerificationTests(unittest.TestCase):
             out=Path(tmp)/'result'
             code=main(['--input',str(root/'input_esempio.json'),'--profiles','NACA4412',
                        '--blades','2','--output',str(out)])
-            report=json.loads((out/'report.json').read_text())
+            report=json.loads((out/'00_sintesi'/'report.json').read_text())
             self.assertEqual(code,2)
             self.assertIsNone(report['best'])
             self.assertTrue(report['complete'])
-            self.assertTrue((out/'RISULTATO.md').exists())
+            self.assertTrue((out/'00_sintesi'/'RISULTATO.md').exists())
             export.assert_not_called()
 
 

@@ -4,8 +4,9 @@ Inputs of the whole project. The values below are PLACEHOLDERS: replace them.
     CASO      name of the results folder, risultati/<nome>/
     SPINTA    mission: distance, time, mass, nozzles -> thrust per nozzle (0_spinta)
     VENTURI   size limits and numerics of the duct -> dp of the fan (1_venturi)
+    VENTOLA   search bounds of the fan, sized for the dp of the venturi (2_ventola)
 
-The fan (2_ventola) still reads its own input file: the link comes later.
+run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_ventola.json.
 """
 
 CASO = {
@@ -52,4 +53,18 @@ VENTURI = {
     "max_iter": 40,            # optimiser iterations per grid
     "tol_dp": 0.01,            # [-] the dp loop stops when dp changes less than this
     "max_cicli_dp": 4,         # largest number of shape optimisations in the dp loop
+}
+
+VENTOLA = {
+    # Diameter, dp, flow rate and density come from the venturi of the same case.
+    "temperatura_K": 293.15,                 # air temperature, consistent with VENTURI["fluid"]
+    "mozzo_min_max_m": [0.012, 0.024],       # hub diameter bounds [m]
+    "giri_min_max_rpm": [5000.0, 30000.0],   # shaft speed bounds [rpm]
+    "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
+    "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
+    "durata_s": 1.0,                         # duration of the operating point (scales the energy)
+    "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
+    "potenza_max_W": None,                   # end of the power curve, None = 2 x design power
+    "jobs": None,                            # pairs profile/blades in parallel, None = all cores
+    "sizing": {},                            # overrides of the fan sizing settings (see 2_ventola)
 }

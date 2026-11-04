@@ -11,15 +11,11 @@ Per input manuali, export fuori dalla struttura standard o punti provenienti da
 casi diversi si usa `2_ventola/ventola_output/slsqp_<data_ora>/`.
 La destinazione viene stampata prima del calcolo.
 
-Il comando `size` legge per default `input_venturi.json` nella cartella del progetto,
-anche se avviato da un'altra directory. Il campo
-`operating_points[].venturi_result` è impostato a `"auto"`: a ogni avvio seleziona
-il file modificato più recentemente fra
-`../risultati/*/2_venturi/00_sintesi/risultati.json`, con ricerca relativa
-all'installazione di `2_ventola`. A parità di data usa l'ordine del percorso.
-Stampa il file scelto prima del calcolo e ne registra percorso e hash nel report.
-Non ricava dati da risultati intermedi; se l'export scelto è corrotto o incoerente,
-si ferma senza passare silenziosamente a un caso più vecchio.
+Con `"venturi_result": "auto"` il comando `size` seleziona il file modificato
+più recentemente fra `../risultati/*/2_venturi/00_sintesi/risultati.json`, stampa
+il file scelto e ne registra percorso e hash nel report. Se l'export scelto è
+corrotto o incoerente si ferma, senza passare a un caso più vecchio. Nella catena
+`run_sistema.py` non usa `"auto"`: passa il percorso del caso.
 
 È ancora possibile specificare il percorso di un export preciso al posto di
 `"auto"`. I percorsi relativi si risolvono

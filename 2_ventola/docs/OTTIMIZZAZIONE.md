@@ -1,8 +1,8 @@
 # Ottimizzazione preliminare del rotore
 
 Per il nuovo dimensionamento con portata e pressione dal Venturi vedere
-[VENTURI_INPUT.md](VENTURI_INPUT.md). Il default di `size` è ora
-`input_venturi.json`; le descrizioni di spinta e velocità lontano a monte
+[VENTURI_INPUT.md](VENTURI_INPUT.md): nella catena l'input lo scrive
+`run_sistema.py`. Le descrizioni di spinta e velocità lontano a monte
 in questa guida riguardano il modo storico `thrust`, richiamabile con
 `--input input_esempio.json`. In `pressure_flow`, la grandezza vincolata
 e verificata sulle tre griglie è la pressione totale a portata imposta.

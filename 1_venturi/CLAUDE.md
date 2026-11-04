@@ -54,7 +54,7 @@ python -m pytest tests -q -p no:cacheprovider -m "not slow"
 
 `00_sintesi` (RISULTATO.md, risultati.json per la ventola), `01_grafici` (14 svg), `02_excel`,
 `03_cad` (tubo, fluido, zona_disco in STEP e STL; patch STL del fluido; DXF; CSV),
-`04_cfd` (vts 2D/3D, nuvola di punti), `05_convergenza`. Le sottocartelle vengono svuotate a ogni corsa.
+`04_cfd` (vts del piano meridiano, nuvola di punti CSV; il 3D si ottiene in ParaView), `05_convergenza`. Le sottocartelle vengono svuotate a ogni corsa.
 STEP: la parete è la B-spline esatta (`MorphedGeometry.bspline_curves`, poli alle ascisse di
 Greville); STL con tolleranza di corda 0.005 mm, chiusi (verificato con pyvista).
 

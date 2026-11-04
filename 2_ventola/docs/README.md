@@ -5,17 +5,9 @@ Tutti i comandi delle guide vanno eseguiti dalla radice `2_ventola`.
 - [Avvio e struttura del progetto](../README.md).
 - [Dimensionamento da pressione e portata del Venturi](VENTURI_INPUT.md).
 - [Ottimizzazione, input e vincoli](OTTIMIZZAZIONE.md).
-- [Blocco 1: specifica](piano/BLOCCO_1_SPECIFICA.md).
-- [Blocco 2: input e vincoli](piano/BLOCCO_2_INPUT_E_VINCOLI.md).
-- [Blocco 3: modello fisico](piano/BLOCCO_3_MODELLO_FISICO.md).
-- [Blocco 4: architettura](piano/BLOCCO_4_ARCHITETTURA.md).
-- [Blocco 5: BEMT e dati delle pale](piano/BLOCCO_5_BEMT_E_DATI_PALE.md).
-- [Blocco 6: verifica e piano del codice](piano/BLOCCO_6_VERIFICA_E_PIANO_CODICE.md).
+- [Mappa Cp sulle pale](CP_MAP.md).
 
-I blocchi sono conservati come documenti di pianificazione: le indicazioni di
-stato e gli alberi di file al loro interno possono riferirsi a versioni precedenti.
-Le esclusioni correnti e la pausa della validazione sono riportate nel README
-principale. Il vecchio README è conservato nell'[archivio](../archivio/README.md).
+I documenti di pianificazione iniziali sono nella cronologia git.
 
 ## ParaView
 

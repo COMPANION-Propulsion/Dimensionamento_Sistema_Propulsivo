@@ -63,6 +63,8 @@ VENTOLA = {
     "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0,                         # duration of the operating point (scales the energy)
+    "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
+    "potenza_max_W": None,                   # end of the power curve, None = 2 x design power
     "jobs": None,                            # pairs profile/blades in parallel, None = all cores
     "sizing": {},                            # overrides of the fan sizing settings (see 2_ventola)
 }

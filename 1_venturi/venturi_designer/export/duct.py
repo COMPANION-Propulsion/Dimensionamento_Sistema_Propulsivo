@@ -7,7 +7,8 @@ All the output of an optimised duct, in risultati/<caso>/2_venturi/:
     01_grafici/      .svg figures (plots_duct.py)
     02_excel/        venturi_risultati.xlsx (excel_duct.py)
     03_cad/          STEP, STL, DXF, CSV (cad_duct.py)
-    04_cfd/          ParaView .vts 2D and 3D, point cloud .csv/.ply
+    04_cfd/          ParaView .vts of the meridional plane, point cloud .csv
+                     (the 3D field is the plane revolved: Rotational Extrusion in ParaView)
     05_convergenza/  design.json, SLSQP histories, dp loop, grid study
 """
 
@@ -27,7 +28,7 @@ from ..geometry import MorphedGeometry
 from .cad_duct import export_duct_cad, sample, tube_pieces
 from .excel_duct import export_duct_xlsx
 from .fields import duct_fields
-from .paraview import export_paraview_2d, export_paraview_3d
+from .paraview import export_paraview_2d
 from .plots_duct import export_duct_plots
 from .tables import export_pointcloud
 
@@ -64,6 +65,30 @@ def cad_geometry(problem, design) -> MorphedGeometry:
                            fluid=case.fluid, p_inlet=case.p_amb, p_throat_target=None,
                            wall_thickness=case.spessore_parete)
     return MorphedGeometry(problem.layout, design, config)
+
+
+def total_pressure_losses(case, F: Dict, Q: float) -> Dict:
+    """Total-pressure losses of the duct, from the mass-weighted p0 of the sections.
+
+    Far upstream p0 = rho V0^2 / 2 (gauge). With no losses the jet would leave with
+    p0 = that + dp_disk; what is missing is split by where it is lost:
+
+        imbocco    far upstream -> just before the disk band (intake, wall friction)
+        disco      across the band: dp_disk - measured jump (friction in the band)
+        valle      just after the band -> exit plane (diffuser or nozzle, friction)
+
+    The bell mouth of the CAD is outside the flow domain: its loss (about 4 % of the
+    inlet dynamic pressure for a rounded inlet) is not included.
+    """
+    d = F["disk"]
+    p0_inf = 0.5 * case.rho * case.V0 ** 2
+    parts = dict(imbocco_Pa=p0_inf - d["p0_monte"], disco_Pa=case.dp_disk - d["salto_p0"],
+                 valle_Pa=d["p0_valle"] - d["p0_uscita"])
+    total = p0_inf + case.dp_disk - d["p0_uscita"]
+    return dict(**parts, totale_Pa=total, totale_su_dp_disco=total / case.dp_disk,
+                potenza_persa_W=total * Q, p0_uscita_Pa=d["p0_uscita"],
+                nota="Perdite di pressione totale media pesata sulla portata; bocca d'imbocco "
+                     "del CAD non inclusa (fuori dal dominio di calcolo).")
 
 
 def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict) -> Dict:
@@ -110,6 +135,7 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
             salto_p0_disco_Pa=F["disk"]["salto_p0"],
             y_plus_max=float(np.max(F["wall"]["y_plus"])),
             V_getto_ideale_m_s=case.V_jet_ideal, V_uscita_media_m_s=summary["V_exit"]),
+        perdite=total_pressure_losses(case, F, summary["Q"]),
         numerica=dict(
             griglia=f"{case.Nz}x{case.Nr}", turbolenza=case.turbulence_model,
             griglie_studio=", ".join(est.get("grids", [])),
@@ -122,6 +148,7 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
 
 def write_report(results: Dict, path: str) -> str:
     v, s, g, f, n = (results[k] for k in ("ventola", "spinta", "geometria", "flusso", "numerica"))
+    pl = results["perdite"]
     warn = []
     if not s["affidabile"]:
         warn.append(f"- **Studio di griglia non affidabile**: {s['problemi']}.")
@@ -166,6 +193,14 @@ def write_report(results: Dict, path: str) -> str:
         f"{f['salto_p0_disco_Pa']:.3f} Pa",
         f"- getto ideale {f['V_getto_ideale_m_s']:.3f} m/s, velocità media d'uscita "
         f"{f['V_uscita_media_m_s']:.3f} m/s", "",
+        "## Perdite di pressione totale del condotto", "",
+        "| tratto | perdita [Pa] | % del Δp disco |", "|---|---|---|",
+        *[f"| {name} | {pl[k]:.3f} | {100 * pl[k] / v['dp_disk_Pa']:.2f} % |"
+          for name, k in (("imbocco → disco", "imbocco_Pa"), ("banda del disco", "disco_Pa"),
+                          ("disco → uscita", "valle_Pa"), ("**totale**", "totale_Pa"))],
+        "",
+        f"Potenza persa {pl['potenza_persa_W']:.4f} W su {v['potenza_fluido_W']:.4f} W date "
+        f"all'aria. La bocca d'imbocco del CAD è fuori dal dominio di calcolo e non è inclusa.", "",
         "## Numerica", "",
         f"- griglia del risultato {n['griglia']}, studio di griglia su {n['griglie_studio']}, "
         f"modello `{n['turbolenza']}`",
@@ -179,7 +214,8 @@ def write_report(results: Dict, path: str) -> str:
         "- `02_excel/venturi_risultati.xlsx`: tutti i numeri, foglio per argomento",
         "- `03_cad/`: `tubo`, `fluido`, `zona_disco` in STEP e STL (mm, asse x), patch STL del "
         "fluido per la CFD, profilo DXF e CSV",
-        "- `04_cfd/`: campi per ParaView (2D e 3D) e nuvola di punti",
+        "- `04_cfd/`: campo sul piano meridiano per ParaView (per il 3D: filtro Rotational "
+        "Extrusion attorno all'asse x) e nuvola di punti CSV",
         "- `05_convergenza/`: `design.json`, storie SLSQP, ciclo su Δp, studio di griglia", "",
         "Nota: la spinta è quella interna netta; la resistenza esterna della gondola non è "
         "calcolata. Con disco ideale la spinta statica vale 2·Δp·A_uscita: a spinta data il Δp "
@@ -243,8 +279,7 @@ def export_duct_results(problem, design, summary: Dict, dirs: Dict[str, str],
     p_abs = c["p"] + case.p_amb
     mesh = problem.solve(design).system.mesh
     files += [export_paraview_2d(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"], extra),
-              export_paraview_3d(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"], extra=extra),
-              *export_pointcloud(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"])]
+              *export_pointcloud(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"], ply=False)]
 
     results = _json_safe(results)
     path = os.path.join(dirs["sintesi"], "risultati.json")

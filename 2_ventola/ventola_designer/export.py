@@ -20,22 +20,11 @@ def export_geometry(directory, case, design, sections, catalog):
         for i, section in enumerate(sections):
             for j, point in enumerate(section["points"]):
                 writer.writerow([i, j, *point])
-    with (out / "blade_surface.obj").open("w", encoding="utf-8") as stream:
-        stream.write("# Initial blade surface, metres. Open at root and tip; not a manufacturing solid.\n")
-        for section in sections:
-            for xyz in section["points"]:
-                stream.write("v " + " ".join(f"{v:.10g}" for v in xyz) + "\n")
-        n = len(sections[0]["points"])
-        for i in range(len(sections)-1):
-            for j in range(n):
-                k = (j+1) % n
-                a,b,c,d = i*n+j+1, i*n+k+1, (i+1)*n+k+1, (i+1)*n+j+1
-                stream.write(f"f {a} {b} {c}\nf {a} {c} {d}\n")
-    for profile in catalog:
-        with (out / f"{profile}.dat").open("w", encoding="ascii") as stream:
-            stream.write(f"{profile} analytic, finite trailing edge\n")
-            for x,y in naca4(profile):
-                stream.write(f"{x:.10f} {y:.10f}\n")
+    profile = design["profile"]          # only the profile of this design
+    with (out / f"{profile}.dat").open("w", encoding="ascii") as stream:
+        stream.write(f"{profile} analytic, finite trailing edge\n")
+        for x,y in naca4(profile):
+            stream.write(f"{x:.10f} {y:.10f}\n")
     report = {
         "status": "geometry_only_not_optimized", "design": design, "input_case": case,
         "thrust_N": None, "shaft_power_W": None, "energy_J": None,
@@ -43,13 +32,11 @@ def export_geometry(directory, case, design, sections, catalog):
         "geometry_convention": "Axis Z; pitch from rotation plane about quarter chord; sections wrapped on constant-radius cylinders.",
         "limitations": ["Initial geometry, not optimized to satisfy thrust.",
                         "No BEMT or optimization executed; aerodynamic polars missing.",
-                        "OBJ is a blade skin, open at root and tip. No hub solid or blade-root attachment.",
+                        "Solid CAD (hub + blades, STEP/STL) is written only for an optimised design.",
                         "Duct contributions and mechanical integrity not evaluated."],
     }
     (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     (out / "preview.svg").write_text(preview(design, sections, catalog), encoding="utf-8")
-    from .stl_export import export_stl
-    export_stl(out, design)
 
 
 def preview(design, sections, catalog):

@@ -11,10 +11,12 @@ def organize_results(directory):
         raise ValueError('Serve una cartella di esecuzione.')
     mapping = {'report.json': '00_sintesi', 'RISULTATO.md': '00_sintesi',
                'preview.svg': '01_grafici', 'sections.csv': '02_excel',
-               'blade_points.csv': '03_cad', 'blade_surface.obj': '03_cad',
+               'blade_points.csv': '03_cad',
                'optimization.json': '05_convergenza', 'paraview': '04_cfd'}
     mapping.update({p.name: '03_cad' for p in root.glob('NACA*.dat')})
-    mapping.update({name: '03_cad' for name in ('pala_mm.stl', 'ventola_pale_mm.stl', 'STL_info.json')})
+    mapping['CAD_info.json'] = '03_cad'
+    mapping.update({f'{n}.{e}': '03_cad' for n in ('pala', 'ventola_A', 'ventola_B_speculare')
+                    for e in ('step', 'stl')})
     moves = []
     for name, folder in mapping.items():
         source = root/name

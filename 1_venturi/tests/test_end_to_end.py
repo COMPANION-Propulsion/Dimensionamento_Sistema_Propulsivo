@@ -133,7 +133,7 @@ def test_command_line_run_writes_the_files(tmp_path, monkeypatch):
     for f in ("00_sintesi/RISULTATO.md", "01_grafici/geometria.svg",
               "01_grafici/campo_pressione_totale.svg", "01_grafici/profili_assiali.svg",
               "02_excel/venturi_risultati.xlsx", "03_cad/tubo.step", "03_cad/fluido.stl",
-              "03_cad/fluido_parete.stl", "04_cfd/venturi_cfd_2d.vts",
+              "03_cad/fluido_parete.stl", "04_cfd/venturi_cfd_2d.vts", "04_cfd/venturi_pointcloud.csv",
               "05_convergenza/design.json", "05_convergenza/iterazioni_dp.json",
               "05_convergenza/grid_study.md"):
         assert (root / f).is_file(), f

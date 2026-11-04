@@ -78,5 +78,7 @@ def duct_fields(problem, design) -> Dict[str, Dict[str, np.ndarray]]:
     disk = dict(p0_monte=float(sections["p0_mean"][max(i_in - 1, 0)]),
                 p0_valle=float(sections["p0_mean"][min(i_out + 1, m.Nz - 1)]))
     disk["salto_p0"] = disk["p0_valle"] - disk["p0_monte"]
+    disk["p0_ingresso"] = float(sections["p0_mean"][0])
+    disk["p0_uscita"] = float(sections["p0_mean"][-1])
     return dict(cells=cells, sections=sections, wall=wall, radial=radial, disk=disk,
                 geom=geom, case=case, Q=Q)
