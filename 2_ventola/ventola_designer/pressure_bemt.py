@@ -89,7 +89,9 @@ def solve_pressure(case, design, point, polar, stations=32):
     if energy_error > 1e-5:
         raise PolarDomainError('Bilancio energetico non convergente.')
     return dict(thrust_rotor_N=thrust, torque_Nm=torque, shaft_power_W=power,
-        total_pressure_rise_Pa=pressure_power/flow, static_pressure_rise_Pa=thrust/area,
+        total_pressure_rise_Pa=pressure_power/flow,
+        axial_total_pressure_rise_Pa=(pressure_power-swirl_power)/flow,
+        static_pressure_rise_Pa=thrust/area,
         fluid_power_W=pressure_power, swirl_power_W=swirl_power,
         profile_loss_power_W=profile_loss, total_pressure_efficiency=pressure_power/power,
         volume_flow_m3_s=flow, mass_flow_kg_s=rho*flow, density_kg_m3=rho,

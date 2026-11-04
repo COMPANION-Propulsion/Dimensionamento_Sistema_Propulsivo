@@ -80,8 +80,13 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
             L_ventola_m=case.L_disk, portata_m3_s=summary["Q"],
             portata_massica_kg_s=summary["mass_flow"], V_disco_m_s=summary["V_disk"],
             potenza_fluido_W=summary["power"], densita_kg_m3=case.rho, V0_m_s=case.V0,
+            spinta_rotore_N=case.dp_disk * math.pi * g.R_disk ** 2,
+            tipo_dp="salto di pressione totale ASSIALE del disco attuatore (senza swirl)",
+            mozzo_modellato=False,
             nota="z misurato dal piano d'ingresso del condotto (inizio della parete bagnata, "
-                 "dopo la bocca d'imbocco)"),
+                 "dopo la bocca d'imbocco). Il disco e pieno: il mozzo della ventola non e "
+                 "nel modello del condotto. La spinta sul rotore e dp x area del disco; il "
+                 "resto della spinta lo da il condotto (depressione sul labbro d'ingresso)."),
         spinta=dict(
             richiesta_N=case.T_target, sorgente=info.get("source", ""),
             calcolata_N=summary["thrust"], da_bilancio_forze_N=summary["thrust_from_forces"],
@@ -137,7 +142,9 @@ def write_report(results: Dict, path: str) -> str:
         f"| spessore assiale ventola | {v['L_ventola_m'] * 1e3:.2f} mm |",
         f"| portata | {v['portata_m3_s'] * 1e3:.4f} L/s ({v['portata_massica_kg_s'] * 1e3:.4f} g/s) |",
         f"| velocità sul disco | {v['V_disco_m_s']:.3f} m/s |",
-        f"| potenza data al fluido (Δp·Q) | {v['potenza_fluido_W']:.4f} W |", "",
+        f"| potenza data al fluido (Δp·Q) | {v['potenza_fluido_W']:.4f} W |",
+        f"| spinta sul rotore (Δp × area disco) | {v['spinta_rotore_N']:.4g} N |", "",
+        "Il Δp è assiale, senza swirl: è quello che la ventola deve dare all'aria utile alla spinta.", "",
         "## Spinta", "",
         f"- richiesta per ugello: {s['richiesta_N']:.5g} N (da `{s['sorgente']}`)",
         f"- calcolata sulla griglia fine: {s['calcolata_N']:.5g} N, "

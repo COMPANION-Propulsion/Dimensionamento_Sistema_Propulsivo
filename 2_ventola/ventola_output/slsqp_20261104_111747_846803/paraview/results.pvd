@@ -1,7 +1,0 @@
-<?xml version="1.0"?>
-<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">
-<Collection>
-<DataSet timestep="0" group="run_000" part="0" file="run_000_NACA4412_3pale_point_00.vtp"/>
-<DataSet timestep="1" group="run_000" part="0" file="run_000_NACA4412_3pale_point_01.vtp"/>
-</Collection>
-</VTKFile>

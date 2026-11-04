@@ -1,8 +1,11 @@
 # Ventola a portata imposta dal Venturi
 
 I risultati di `size` vengono salvati automaticamente in
-`risultati/<caso>/3_ventola/slsqp_<data_ora>/` quando tutti i punti importano
-export dal medesimo caso Venturi. Ogni esecuzione crea una nuova cartella.
+`risultati/<caso>/3_ventola/` quando tutti i punti importano export dal
+medesimo caso Venturi; la cartella viene riscritta a ogni esecuzione, come
+`2_venturi/`. Nella catena completa (`python run_sistema.py`) l'input della
+ventola viene scritto da `VENTOLA` di `input.py` in `risultati/<caso>/input_ventola.json`,
+con il percorso esplicito del Venturi dello stesso caso.
 `--output` permette di scegliere esplicitamente una destinazione diversa.
 Per input manuali, export fuori dalla struttura standard o punti provenienti da
 casi diversi si usa `2_ventola/ventola_output/slsqp_<data_ora>/`.
@@ -32,7 +35,7 @@ Per un unico punto, la durata scala l'energia senza modificare il minimo di pote
 | Dato Venturi | Utilizzo |
 |---|---|
 | ventola.D_ventola_m | Diametro esterno imposto |
-| ventola.dp_disk_Pa | Pressione totale minima richiesta |
+| ventola.dp_disk_Pa | Pressione totale ASSIALE minima richiesta (swirl escluso) |
 | ventola.portata_m3_s | Portata volumetrica da conservare |
 | ventola.V_disco_m_s | Controllo Q = V disco * pi D²/4 |
 | ventola.densita_kg_m3 | Densità costante del calcolo |
@@ -77,6 +80,12 @@ Con velocità assiale costante e trascurando gli scambi radiali:
 `dp_statica(r) = (dT/dr)/(2 pi r)`
 
 `dp_totale(r) = dp_statica(r) + rho (2b)²/2`.
+
+Il requisito confronta `dp_disk_Pa` con la pressione totale assiale
+`axial_total_pressure_rise_Pa = (potenza nel fluido - potenza nello swirl) / Q`:
+il disco attuatore del Venturi non ha swirl, e senza statore l'energia dello
+swirl esce col getto senza dare spinta. `total_pressure_rise_Pa` (con swirl)
+resta nel report per confronto.
 
 Il salto di pressione totale è mediato pesando con la portata degli anelli.
 L'ottimizzatore impone questo salto almeno pari al requisito maggiorato di

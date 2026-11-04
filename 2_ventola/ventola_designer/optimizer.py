@@ -4,10 +4,13 @@ Variabili normalizzate: mozzo, quattro corde, quattro calettamenti, rpm per punt
 Profilo e numero intero di pale sono enumerati esternamente. Nessuna CFD.
 """
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 import json
 import math
+import os
 from pathlib import Path
+import shutil
 import numpy as np
 from scipy.optimize import minimize
 from .bemt import solve, ModelDomainError
@@ -161,7 +164,12 @@ def _optimize_start(case, profile, blades, polar, seed_energy, seed, maxiter):
 
 
 def default_output_directory(case):
-    """Salva nel caso Venturi comune a tutti i punti, se identificabile."""
+    """Salva nel caso Venturi comune a tutti i punti, se identificabile.
+
+    Nel caso: risultati/<caso>/3_ventola/, riscritta a ogni esecuzione come
+    2_venturi (il caso e gia identificato dal nome della cartella). Fuori da un
+    caso: ventola_output/slsqp_<data_ora>/, una cartella nuova per esecuzione.
+    """
     roots = set()
     points = case['operating_points']
     for point in points:
@@ -175,7 +183,7 @@ def default_output_directory(case):
         roots.add(path.parents[2])
     else:
         if points and len(roots) == 1:
-            return next(iter(roots))/'3_ventola'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+            return next(iter(roots))/'3_ventola'
     return Path(__file__).resolve().parents[1]/'ventola_output'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
 
 
@@ -187,6 +195,8 @@ def main(argv=None):
     parser.add_argument('--maxiter',type=int)
     parser.add_argument('--validate-only',action='store_true')
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--jobs',type=int,default=os.cpu_count() or 1,
+                        help='Coppie profilo/pale ottimizzate in parallelo (default: tutti i core).')
     args = parser.parse_args(argv)
     try:
         case = load_case(args.input)
@@ -212,6 +222,8 @@ def main(argv=None):
         if 'venturi_source' in point:
             print(f"Input Venturi [{point['name']}]: {point['venturi_source']['path']}", flush=True)
     out = args.output or default_output_directory(case)
+    if args.output is None and out.name == '3_ventola' and out.exists():
+        shutil.rmtree(out)          # cartella del caso: nessun file di un'esecuzione precedente
     out.mkdir(parents=True,exist_ok=False)
     print(f'Cartella risultati: {out.resolve()}', flush=True)
     report = {'method':'SLSQP_local_discrete_enumeration','complete':False,'input_case':case,'runs':[],
@@ -223,15 +235,28 @@ def main(argv=None):
                              'Local multistart optimization; global optimum not guaranteed.',
                              'Chord, pitch, solidity and Mach bounds are provisional project choices.',
                              'Invalid BEMT points rejected with discontinuous penalty; may obstruct convergence.']}
-    for profile in profiles:
-        for b in blades:
-            print(f'SLSQP {profile}, {b} pale...',flush=True)
-            run = optimize_pair(case,profile,b,args.maxiter)
-            report['runs'].append(run)
-            accepted = [r for r in report['runs'] if r['accepted']]
-            report['best'] = min(accepted,key=lambda r:r['energy_J']) if accepted else None
-            (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
-            print(f"  {run['status']}: {run.get('energy_J')} J",flush=True)
+    # Le coppie profilo/pale sono indipendenti: un processo per coppia.
+    pairs = [(profile, b) for profile in profiles for b in blades]
+    order = {pair: i for i, pair in enumerate(pairs)}
+    jobs = max(1, min(args.jobs, len(pairs)))
+    print(f'SLSQP su {len(pairs)} coppie profilo/pale, {jobs} in parallelo', flush=True)
+
+    def record(run):
+        report['runs'].append(run)
+        report['runs'].sort(key=lambda r: order[(r['profile'], r['blades'])])
+        accepted = [r for r in report['runs'] if r['accepted']]
+        report['best'] = min(accepted,key=lambda r:r['energy_J']) if accepted else None
+        (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
+        print(f"  {run['profile']}, {run['blades']} pale: {run['status']}: {run.get('energy_J')} J",flush=True)
+
+    if jobs == 1:
+        for profile, b in pairs:
+            record(optimize_pair(case,profile,b,args.maxiter))
+    else:
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            futures = [pool.submit(optimize_pair,case,profile,b,args.maxiter) for profile, b in pairs]
+            for future in as_completed(futures):
+                record(future.result())
     report['complete']=True
     if report['best']:
         best = report['best']

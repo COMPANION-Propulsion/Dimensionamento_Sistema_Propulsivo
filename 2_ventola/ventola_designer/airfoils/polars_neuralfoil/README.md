@@ -11,7 +11,7 @@ compressibilita e modello post-stallo predefiniti di AeroSandbox.
 
 Griglia per ogni profilo (3504 punti):
 
-- Re: 5000, 10000, 20000, 30000, 50000, 75000, 100000, 150000.
+- Re: 2000, 3000, 5000, 10000, 20000, 30000, 50000, 75000, 100000, 150000 (2000 e 3000 aggiunti il 2026-11-04; confidenza NeuralFoil >= 0.89 fra 0 e 10 gradi).
 - Mach: 0, 0.1, 0.2, 0.3, 0.45, 0.5.
 - Alpha: da -12 a 24 gradi, passo 0.5 gradi.
 

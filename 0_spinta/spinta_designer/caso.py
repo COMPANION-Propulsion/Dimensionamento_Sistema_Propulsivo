@@ -35,12 +35,16 @@ HASHED = ("SPINTA", "VENTURI")      # dictionaries that define the case
 
 
 def load_input(path: str = INPUT_FILE) -> Dict[str, dict]:
-    """The dictionaries of input.py (CASO, SPINTA, VENTURI), missing ones empty."""
+    """The dictionaries of input.py (CASO, SPINTA, VENTURI, VENTOLA), missing ones empty.
+
+    VENTOLA is not in the hash: the fan settings do not change spinta and venturi,
+    so a new fan search reuses the case and rewrites only 3_ventola/.
+    """
     spec = importlib.util.spec_from_file_location("project_input", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return {name: dict(getattr(module, name, None) or {})
-            for name in ("CASO",) + HASHED}
+            for name in ("CASO",) + HASHED + ("VENTOLA",)}
 
 
 def input_hash(inputs: Dict[str, dict]) -> str:

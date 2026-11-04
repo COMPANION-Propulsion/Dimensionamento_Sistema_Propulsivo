@@ -13,7 +13,7 @@ Aprire il VTP in ParaView, premere Apply e selezionare `Cp` nel menu dei colori.
 La geometria standard `fan_geometry.vtp` non viene modificata.
 
 XFOIL deve essere disponibile in PATH, indicato con `--xfoil PERCORSO`, oppure
-installato in `Dimensionamento_Sistema_Propulsivo/tools/xfoil/dist/xfoil.exe`. Il pacchetto Windows
+installato in `2_ventola/tools/xfoil/dist/xfoil.exe`. Il pacchetto Windows
 usato proviene da https://web.mit.edu/drela/Public/web/xfoil/ (licenza GPL).
 Il manifest registra gli hash dell'eseguibile e del report di origine.
 

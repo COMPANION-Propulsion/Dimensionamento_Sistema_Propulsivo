@@ -135,7 +135,7 @@ def export_cp(report_path, executable, sections=17):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--report', required=True, type=Path)
-    bundled = Path(__file__).resolve().parents[2]/'tools'/'xfoil'/'dist'/'xfoil.exe'
+    bundled = Path(__file__).resolve().parents[1]/'tools'/'xfoil'/'dist'/'xfoil.exe'
     parser.add_argument('--xfoil', type=Path, default=shutil.which('xfoil') or bundled)
     parser.add_argument('--sections', type=int, default=17)
     args = parser.parse_args(argv)

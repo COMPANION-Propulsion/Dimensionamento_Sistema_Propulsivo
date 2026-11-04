@@ -127,7 +127,7 @@ def export_paraview_results(directory, case, runs, best=None):
                                            "thrust_rotor_N": [result["thrust_rotor_N"]],
                                            "shaft_power_W": [result["shaft_power_W"]], "rpm": [result["rpm"]],
                                            **{k:[result[k]] for k in ('volume_flow_m3_s','mass_flow_kg_s',
-                                               'total_pressure_rise_Pa','static_pressure_rise_Pa',
+                                               'total_pressure_rise_Pa','axial_total_pressure_rise_Pa','static_pressure_rise_Pa',
                                                'axial_blade_velocity_m_s','fluid_power_W','swirl_power_W',
                                                'total_pressure_efficiency') if k in result}})
                 entry = {"file": filename, "run_index": run_index, "profile": run["profile"],

@@ -1,0 +1,24 @@
+# Whole suite: 0_spinta, 1_venturi, 2_ventola, run_sistema.py.
+# Python 3.14 (tested with 3.14.7). Install with:  python -m pip install -r requirements.txt
+# Versions are the ones the suite was tested with on 2026-11-04.
+
+# --- calculation ------------------------------------------------------------
+numpy==2.5.3
+scipy==1.18.1
+numba==0.67.0          # kernels of the venturi flow solver
+
+# --- output -----------------------------------------------------------------
+matplotlib==3.11.1     # .svg figures
+openpyxl==3.1.5        # Excel files
+pyvista==0.49.0        # ParaView files, STL check (installs vtk)
+cadquery==2.8.0        # STEP files of the duct
+ezdxf==1.4.4           # DXF profile of the duct
+
+# --- fan polars (only to regenerate them: python -m ventola_designer.generate_polars)
+neuralfoil==0.3.3
+aerosandbox==4.2.10
+
+# --- tests ------------------------------------------------------------------
+pytest==9.1.1
+
+# Not on PyPI: XFOIL 6.99 for the Cp map of the fan is in 2_ventola/tools/xfoil/ (GPL).

@@ -22,7 +22,7 @@ def rejection_reason(run, cfg):
         reasons.append(run['verification_error'])
     if run.get('min_constraint',0) < -cfg['constraint_tolerance']:
         reasons.append('Vincolo violato nella griglia di verifica')
-    pressure = run.get('refinement_metric') == 'total_pressure_rise_Pa'
+    pressure = run.get('refinement_metric') in ('total_pressure_rise_Pa', 'axial_total_pressure_rise_Pa')
     changes = run.get('duty_refinement_changes', run.get('thrust_refinement_changes',[0]))
     limit = cfg['max_pressure_grid_change' if pressure else 'max_thrust_grid_change']
     if max(changes) >= limit:

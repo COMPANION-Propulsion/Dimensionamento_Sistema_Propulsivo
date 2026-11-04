@@ -12,7 +12,7 @@ from .polars import coordinate_hash
 def main():
     output = Path(__file__).parent / "airfoils" / "polars_neuralfoil"
     output.mkdir(exist_ok=True)
-    re = [5000,10000,20000,30000,50000,75000,100000,150000]
+    re = [2000,3000,5000,10000,20000,30000,50000,75000,100000,150000]   # 2000-3000: piccole ventole lente
     mach = [0.0,0.1,0.2,0.3,0.45,0.5]
     alpha = np.arange(-12,24.01,0.5)
     versions = {p:importlib.metadata.version(p) for p in ("neuralfoil","aerosandbox","numpy","scipy")}

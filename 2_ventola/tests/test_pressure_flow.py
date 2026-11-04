@@ -68,8 +68,9 @@ class PressureFlowTests(unittest.TestCase):
     def test_real_polar_fixed_geometry_and_pressure_constraint(self):
         polar = PolarGrid.load(ROOT/'ventola_designer/airfoils/polars_neuralfoil/NACA4412.json')
         energy, constraints, results = evaluate(self.case, self.design, polar)
-        dp = results[0]['total_pressure_rise_Pa']
+        dp = results[0]['axial_total_pressure_rise_Pa']
         self.assertAlmostEqual(constraints[0], dp/1.002-1)
+        self.assertLess(dp, results[0]['total_pressure_rise_Pa'])     # swirl excluded
         self.point['minimum_total_pressure_rise_Pa'] = dp*2
         changed_energy, changed, _ = evaluate(self.case, self.design, polar)
         self.assertLess(changed[0], 0)
@@ -81,12 +82,12 @@ class PressureFlowTests(unittest.TestCase):
 
     def test_final_grid_rejects_pressure_change_with_same_thrust(self):
         attempt = dict(accepted=True, design=self.design, energy_J=10.,
-                       cases=[dict(thrust_rotor_N=1., total_pressure_rise_Pa=100.)])
+                       cases=[dict(thrust_rotor_N=1., axial_total_pressure_rise_Pa=100.)])
         evaluator = Mock(return_value=(10., [.1],
-            [dict(thrust_rotor_N=1., total_pressure_rise_Pa=110.)]))
+            [dict(thrust_rotor_N=1., axial_total_pressure_rise_Pa=110.)]))
         result = finalize_attempt(self.case, attempt, None, evaluator)
         self.assertFalse(result['accepted'])
-        self.assertEqual(result['final_verification']['metric'], 'total_pressure_rise_Pa')
+        self.assertEqual(result['final_verification']['metric'], 'axial_total_pressure_rise_Pa')
 
     def test_import_and_consistency_checks(self):
         data = copy.deepcopy(self.case)

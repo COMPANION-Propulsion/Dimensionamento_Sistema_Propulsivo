@@ -1,10 +1,12 @@
 # Dimensionamento preliminare della ventola
 
-Per il dimensionamento dal Venturi partire da [input_venturi.json](input_venturi.json):
+Nella catena completa la ventola si lancia con `python run_sistema.py` dalla
+radice del progetto: le impostazioni stanno in `VENTOLA` di `input.py`, i
+risultati in `risultati/<caso>/3_ventola/`. Per un uso separato partire da [input_venturi.json](input_venturi.json):
 il campo `venturi_result: "auto"` seleziona l'export Venturi piu recente disponibile.
 Avviare dalla cartella `2_ventola` con
 `.\.venv\Scripts\python.exe -m ventola_designer size`.
-Diametro, pressione totale, portata e
+Diametro, pressione totale assiale (swirl escluso), portata e
 densità vengono importati; la velocità sulle pale è ricalcolata sull'area libera
 del mozzo. Guida: [input dal Venturi](docs/VENTURI_INPUT.md).
 
@@ -24,7 +26,8 @@ condizioni, minimizzando l'energia meccanica del ciclo con il modello BEMT.
 | `ventola_designer/` | Codice Python: modello, geometria, ottimizzatore ed esportazioni |
 | `ventola_designer/airfoils/` | Catalogo e dati aerodinamici usati dal codice |
 | `tests/` | Test automatici del software |
-| [ventola_output/](ventola_output/) | Risultati delle esecuzioni, in cartelle separate |
+| `ventola_output/` | Risultati delle esecuzioni manuali fuori da un caso, in cartelle datate |
+| `tools/xfoil/` | XFOIL 6.99 per Windows (GPL), usato dalla mappa di Cp |
 | [archivio/](archivio/README.md) | Backup e istruzioni storiche conservati |
 | `.venv/` | Ambiente Python locale del progetto |
 | [requirements-polars.txt](requirements-polars.txt) | Dipendenze per la generazione delle polari |
@@ -46,9 +49,10 @@ Per avviare il dimensionamento con i requisiti del file:
 
 Per usare un altro file, sostituire il percorso dopo `--input`. `--output` permette
 di scegliere una nuova cartella di destinazione; altrimenti il programma crea
-una cartella datata sotto `risultati/<caso>/3_ventola/` se tutti i punti provengono
-dallo stesso caso Venturi nella struttura standard. Negli altri casi usa
-`2_ventola/ventola_output/`.
+`risultati/<caso>/3_ventola/` (riscritta a ogni esecuzione) se tutti i punti
+provengono dallo stesso caso Venturi nella struttura standard. Negli altri casi
+crea una cartella datata in `2_ventola/ventola_output/`. `--jobs N` fissa quante
+coppie profilo/pale girano in parallelo (default: tutti i core).
 
 Per verificare il software:
 
