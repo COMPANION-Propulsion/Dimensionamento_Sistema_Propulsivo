@@ -61,6 +61,28 @@ all'ottimizzatore è in [docs/OTTIMIZZAZIONE.md](docs/OTTIMIZZAZIONE.md).
 
 ## Leggere i risultati
 
+Le nuove esecuzioni seguono la struttura del Venturi:
+
+| Cartella | Contenuto |
+|---|---|
+| `00_sintesi` | `RISULTATO.md`, `report.json` |
+| `01_grafici` | `preview.svg` |
+| `02_excel` | `sections.csv` (tabella apribile in Excel, non workbook XLSX) |
+| `03_cad` | STL in mm, superficie OBJ, punti CSV, profili DAT |
+| `04_cfd` | File ParaView, manifest e cartelle delle mappe Cp |
+| `05_convergenza` | `optimization.json` con candidati e verifiche |
+
+Per il comando Cp usare il report in `00_sintesi/report.json`.
+
+Gli STL `ventola_pale_mm.stl` (tutte le pale) e `pala_mm.stl` (una pala)
+sono esportati automaticamente. Impostare millimetri durante l'importazione CAD:
+STL non codifica un'unita standard. Le pale sono chiuse a radice e punta, ma
+sono corpi separati; mozzo e attacchi non sono ancora modellati.
+Si tratta di mesh triangolate senza Cp, non di modelli CAD parametrici.
+`03_cad/STL_info.json` documenta dimensioni, volumi e controlli di chiusura.
+Le descrizioni sotto si riferiscono ai contenuti di queste sottocartelle;
+le esecuzioni precedenti possono conservare la struttura originaria.
+
 Nella cartella dell'esecuzione:
 
 - `RISULTATO.md`: riepilogo leggibile ed esito dei candidati.

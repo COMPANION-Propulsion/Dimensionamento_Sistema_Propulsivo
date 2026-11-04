@@ -1,0 +1,20 @@
+PLOP
+G
+
+LOAD foil.dat
+PANE
+PSAV panel.dat
+OPER
+VISC 21991.22692
+MACH 0.07544911783
+VPAR
+N 9
+
+ITER 250
+PACC
+polar.dat
+
+ALFA 7.694162151
+CPWR cp.dat
+
+QUIT

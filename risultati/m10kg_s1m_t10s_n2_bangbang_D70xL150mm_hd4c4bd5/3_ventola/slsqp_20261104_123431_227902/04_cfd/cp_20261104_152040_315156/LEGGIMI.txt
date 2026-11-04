@@ -1,0 +1,3 @@
+Aprire fan_cp_point_00.vtp in ParaView, Apply, scegliere Cp.
+Cp=(p-p_ref_local)/(0.5*rho*W_relative^2)
+One-way postprocessing; does not update BEMT. No 3D, cascade or duct interaction. No radial extrapolation to root/tip. Surface strips require two converged adjacent sections.

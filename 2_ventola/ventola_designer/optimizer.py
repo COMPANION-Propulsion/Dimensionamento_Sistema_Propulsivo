@@ -249,6 +249,8 @@ def main(argv=None):
     (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
     (out/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
     (out/'RISULTATO.md').write_text(render_report(report),encoding='utf-8')
+    from .result_layout import organize_results
+    organize_results(out)
     print(f'Report: {out.resolve()}')
     return 0 if report['best'] else 2
 

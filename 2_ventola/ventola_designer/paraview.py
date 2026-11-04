@@ -91,11 +91,7 @@ def _safe_name(value):
 
 
 def export_paraview_results(directory, case, runs, best=None):
-    """Esporta tutti i candidati calcolabili e le loro condizioni operative.
-
-    Ogni VTP di risultato contiene una linea radiale e grandezze locali BEMT.
-    I candidati esclusi restano esportati, con ``accepted`` uguale a zero.
-    """
+    """Esporta geometria e risultati radiali del solo candidato selezionato."""
     out = Path(directory) / "paraview"
     out.mkdir(parents=True, exist_ok=True)
     manifest = {"format": "VTK XML PolyData", "length_unit": "m",
@@ -104,12 +100,14 @@ def export_paraview_results(directory, case, runs, best=None):
     if best:
         manifest["geometry"] = export_geometry_vtp(out, best["design"])
     collections = []
-    for run_index, run in enumerate(runs):
-        design = run.get("design")
-        if not design:
-            manifest["skipped_runs"].append({"profile": run["profile"], "blades": run["blades"],
-                                             "reason": "nessuna geometria calcolabile"})
-            continue
+    selected = None
+    if best and best.get('accepted'):
+        selected = next((run for run in runs if run.get('profile') == best.get('profile')
+                         and run.get('blades') == best.get('blades')), None)
+    if selected:
+        run = {**selected, **best, 'accepted': True}
+        run_index = runs.index(selected)
+        design = best['design']
         try:
             from .optimizer import evaluate  # evita un'importazione circolare al caricamento
             polar = PolarGrid.load(Path(__file__).parent / "airfoils" / "polars_neuralfoil" /
@@ -118,28 +116,26 @@ def export_paraview_results(directory, case, runs, best=None):
         except (OSError, ValueError, PolarDomainError) as exc:
             manifest["skipped_runs"].append({"profile": run["profile"], "blades": run["blades"],
                                              "reason": str(exc)})
-            continue
-        for point_index, result in enumerate(cases):
-            local = result["local"]
-            filename = f'run_{run_index:03d}_{_safe_name(run["profile"])}_{run["blades"]}pale_point_{point_index:02d}.vtp'
-            fields = {key: [row[key] for row in local] for key in local[0] if key != "r_m"}
-            _write_polydata(out / filename, [(row["r_m"], 0.0, 0.0) for row in local],
-                            lines=[tuple(range(len(local)))], point_data=fields,
-                            cell_data={"accepted": [1.0 if run.get("accepted") else 0.0],
-                                       "blade_count": [float(run["blades"])],
-                                       "thrust_rotor_N": [result["thrust_rotor_N"]],
-                                       "shaft_power_W": [result["shaft_power_W"]],
-                                       "rpm": [result["rpm"]],
-                                       **{k:[result[k]] for k in ('volume_flow_m3_s','mass_flow_kg_s',
-                                           'total_pressure_rise_Pa','static_pressure_rise_Pa',
-                                           'axial_blade_velocity_m_s','fluid_power_W','swirl_power_W',
-                                           'total_pressure_efficiency') if k in result}})
-            entry = {"file": filename, "run_index": run_index, "profile": run["profile"],
-                     "blade_count": run["blades"], "accepted": bool(run.get("accepted")),
-                     "status": run.get("status"), "operating_point": result["operating_point"],
-                     "thrust_rotor_N": result["thrust_rotor_N"], "shaft_power_W": result["shaft_power_W"]}
-            manifest["datasets"].append(entry)
-            collections.append((point_index, run_index, filename))
+        else:
+            for point_index, result in enumerate(cases):
+                local = result["local"]
+                filename = f'run_{run_index:03d}_{_safe_name(run["profile"])}_{run["blades"]}pale_point_{point_index:02d}.vtp'
+                fields = {key: [row[key] for row in local] for key in local[0] if key != "r_m"}
+                _write_polydata(out / filename, [(row["r_m"], 0.0, 0.0) for row in local],
+                                lines=[tuple(range(len(local)))], point_data=fields,
+                                cell_data={"accepted": [1.0], "blade_count": [float(run["blades"])],
+                                           "thrust_rotor_N": [result["thrust_rotor_N"]],
+                                           "shaft_power_W": [result["shaft_power_W"]], "rpm": [result["rpm"]],
+                                           **{k:[result[k]] for k in ('volume_flow_m3_s','mass_flow_kg_s',
+                                               'total_pressure_rise_Pa','static_pressure_rise_Pa',
+                                               'axial_blade_velocity_m_s','fluid_power_W','swirl_power_W',
+                                               'total_pressure_efficiency') if k in result}})
+                entry = {"file": filename, "run_index": run_index, "profile": run["profile"],
+                         "blade_count": run["blades"], "accepted": True, "status": run.get("status"),
+                         "operating_point": result["operating_point"],
+                         "thrust_rotor_N": result["thrust_rotor_N"], "shaft_power_W": result["shaft_power_W"]}
+                manifest["datasets"].append(entry)
+                collections.append((point_index, run_index, filename))
     pvd = ['<?xml version="1.0"?>', '<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">', '<Collection>']
     for point_index, run_index, filename in collections:
         pvd.append(f'<DataSet timestep="{point_index}" group="run_{run_index:03d}" part="0" file="{filename}"/>')
