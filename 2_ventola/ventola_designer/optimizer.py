@@ -160,6 +160,25 @@ def _optimize_start(case, profile, blades, polar, seed_energy, seed, maxiter):
     return finalize_attempt(case,report,polar,evaluate)
 
 
+def default_output_directory(case):
+    """Salva nel caso Venturi comune a tutti i punti, se identificabile."""
+    roots = set()
+    points = case['operating_points']
+    for point in points:
+        source = point.get('venturi_source', {}).get('path')
+        if not source:
+            break
+        path = Path(source).resolve()
+        if (path.name != 'risultati.json' or path.parent.name != '00_sintesi'
+                or path.parent.parent.name != '2_venturi'):
+            break
+        roots.add(path.parents[2])
+    else:
+        if points and len(roots) == 1:
+            return next(iter(roots))/'3_ventola'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+    return Path(__file__).resolve().parents[1]/'ventola_output'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',type=Path,default=Path(__file__).resolve().parents[1]/'input_venturi.json')
@@ -192,8 +211,9 @@ def main(argv=None):
     for point in case['operating_points']:
         if 'venturi_source' in point:
             print(f"Input Venturi [{point['name']}]: {point['venturi_source']['path']}", flush=True)
-    out = args.output or Path('ventola_output')/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
+    out = args.output or default_output_directory(case)
     out.mkdir(parents=True,exist_ok=False)
+    print(f'Cartella risultati: {out.resolve()}', flush=True)
     report = {'method':'SLSQP_local_discrete_enumeration','complete':False,'input_case':case,'runs':[],
               'scope':{'profiles':profiles,'blade_counts':blades},'best':None,
               'settings':sizing_settings(case),

@@ -1,5 +1,13 @@
 # Ventola a portata imposta dal Venturi
 
+I risultati di `size` vengono salvati automaticamente in
+`risultati/<caso>/3_ventola/slsqp_<data_ora>/` quando tutti i punti importano
+export dal medesimo caso Venturi. Ogni esecuzione crea una nuova cartella.
+`--output` permette di scegliere esplicitamente una destinazione diversa.
+Per input manuali, export fuori dalla struttura standard o punti provenienti da
+casi diversi si usa `2_ventola/ventola_output/slsqp_<data_ora>/`.
+La destinazione viene stampata prima del calcolo.
+
 Il comando `size` legge per default `input_venturi.json` nella cartella del progetto,
 anche se avviato da un'altra directory. Il campo
 `operating_points[].venturi_result` è impostato a `"auto"`: a ogni avvio seleziona

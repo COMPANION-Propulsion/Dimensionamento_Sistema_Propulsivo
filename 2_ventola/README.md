@@ -46,7 +46,9 @@ Per avviare il dimensionamento con i requisiti del file:
 
 Per usare un altro file, sostituire il percorso dopo `--input`. `--output` permette
 di scegliere una nuova cartella di destinazione; altrimenti il programma crea
-una cartella datata sotto `ventola_output/`.
+una cartella datata sotto `risultati/<caso>/3_ventola/` se tutti i punti provengono
+dallo stesso caso Venturi nella struttura standard. Negli altri casi usa
+`2_ventola/ventola_output/`.
 
 Per verificare il software:
 
