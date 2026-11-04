@@ -29,6 +29,9 @@ def solve(case, design, point, polar, stations=32):
     residuali di quantità di moto. Perdite Prandtl opzionali; condotto escluso.
     Solo prova di calcolo rotorico; non modello validato per la ventola.
     """
+    if case.get('design_mode') == 'pressure_flow':
+        from .pressure_bemt import solve_pressure
+        return solve_pressure(case, design, point, polar, stations)
     polar.validate_profile(design["profile"])
     loss_model = sizing_settings(case)['loss_model']
     if type(stations) is not int or stations < 2:

@@ -1,6 +1,16 @@
 # Dimensionamento preliminare della ventola
 
-Partire da `input_esempio.json`: contiene i requisiti modificabili dall'utilizzatore.
+Per il dimensionamento dal Venturi partire da [input_venturi.json](input_venturi.json):
+il campo `venturi_result: "auto"` seleziona l'export Venturi piu recente disponibile.
+Avviare dalla cartella `2_ventola` con
+`.\.venv\Scripts\python.exe -m ventola_designer size`.
+Diametro, pressione totale, portata e
+densità vengono importati; la velocità sulle pale è ricalcolata sull'area libera
+del mozzo. Guida: [input dal Venturi](docs/VENTURI_INPUT.md).
+
+Le istruzioni seguenti per `input_esempio.json` riguardano il precedente modo a
+spinta del rotore libero, mantenuto per compatibilità.
+`input_esempio.json` contiene i requisiti modificabili dall'utilizzatore.
 I valori inclusi sono dimostrativi. Il dimensionatore genera la geometria delle
 pale e cerca con SLSQP un candidato che rispetti la spinta minima in tutte le
 condizioni, minimizzando l'energia meccanica del ciclo con il modello BEMT.

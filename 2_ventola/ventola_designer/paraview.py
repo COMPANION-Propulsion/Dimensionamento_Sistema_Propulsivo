@@ -9,6 +9,7 @@ from xml.sax.saxutils import escape
 
 from .geometry import blade_sections
 from .polars import PolarGrid, PolarDomainError
+from .settings import sizing_settings
 
 
 def _numbers(values):
@@ -113,7 +114,7 @@ def export_paraview_results(directory, case, runs, best=None):
             from .optimizer import evaluate  # evita un'importazione circolare al caricamento
             polar = PolarGrid.load(Path(__file__).parent / "airfoils" / "polars_neuralfoil" /
                                    f'{run["profile"]}.json')
-            _, _, cases = evaluate(case, design, polar, stations=128)
+            _, _, cases = evaluate(case, design, polar, stations=sizing_settings(case)['stations_final'])
         except (OSError, ValueError, PolarDomainError) as exc:
             manifest["skipped_runs"].append({"profile": run["profile"], "blades": run["blades"],
                                              "reason": str(exc)})
@@ -128,7 +129,11 @@ def export_paraview_results(directory, case, runs, best=None):
                                        "blade_count": [float(run["blades"])],
                                        "thrust_rotor_N": [result["thrust_rotor_N"]],
                                        "shaft_power_W": [result["shaft_power_W"]],
-                                       "rpm": [result["rpm"]]})
+                                       "rpm": [result["rpm"]],
+                                       **{k:[result[k]] for k in ('volume_flow_m3_s','mass_flow_kg_s',
+                                           'total_pressure_rise_Pa','static_pressure_rise_Pa',
+                                           'axial_blade_velocity_m_s','fluid_power_W','swirl_power_W',
+                                           'total_pressure_efficiency') if k in result}})
             entry = {"file": filename, "run_index": run_index, "profile": run["profile"],
                      "blade_count": run["blades"], "accepted": bool(run.get("accepted")),
                      "status": run.get("status"), "operating_point": result["operating_point"],

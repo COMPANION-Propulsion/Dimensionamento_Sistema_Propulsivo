@@ -3,6 +3,7 @@
 Tutti i comandi delle guide vanno eseguiti dalla radice `2_ventola`.
 
 - [Avvio e struttura del progetto](../README.md).
+- [Dimensionamento da pressione e portata del Venturi](VENTURI_INPUT.md).
 - [Ottimizzazione, input e vincoli](OTTIMIZZAZIONE.md).
 - [Blocco 1: specifica](piano/BLOCCO_1_SPECIFICA.md).
 - [Blocco 2: input e vincoli](piano/BLOCCO_2_INPUT_E_VINCOLI.md).

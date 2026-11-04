@@ -47,6 +47,11 @@ def operating_air(case, point):
 
 
 def velocity_reference(case):
+    if case.get('design_mode') == 'pressure_flow':
+        reference = case.get('velocity_reference', 'full_disk_flow')
+        if reference != 'full_disk_flow':
+            raise ValueError('pressure_flow richiede velocity_reference=full_disk_flow.')
+        return reference
     reference = case.get('velocity_reference', 'far_upstream')
     if reference != 'far_upstream':
         raise ValueError('Il BEMT attuale richiede velocity_reference="far_upstream"; '
@@ -57,6 +62,11 @@ def velocity_reference(case):
 def load_case(path):
     data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     try:
+        if data.get('design_mode', 'thrust') not in ('thrust', 'pressure_flow'):
+            raise ValueError('design_mode deve essere thrust oppure pressure_flow.')
+        from .venturi_input import import_duties
+        from .duty import pressure_mode
+        import_duties(data, path)
         air, rotor, points = data["air"], data["rotor"], data["operating_points"]
         number(air["temperature_K"], "temperatura [K]")
         number(air["static_pressure_Pa"], "pressione assoluta [Pa]")
@@ -87,10 +97,25 @@ def load_case(path):
             if not isinstance(name, str) or not name.strip() or name in names:
                 raise ValueError("Nomi dei punti operativi vuoti o duplicati.")
             names.add(name)
-            number(point["minimum_rotor_thrust_N"], f"{name}: spinta")
-            number(point["axial_inlet_velocity_m_s"], f"{name}: velocità", strict=False)
+            if pressure_mode(data):
+                if 'minimum_rotor_thrust_N' in point or 'axial_inlet_velocity_m_s' in point:
+                    raise ValueError('pressure_flow usa portata e pressione, non gli input del rotore libero.')
+                number(point['minimum_total_pressure_rise_Pa'], f'{name}: pressione totale')
+                flow = number(point['volume_flow_m3_s'], f'{name}: portata')
+                if 'density_kg_m3' in point:
+                    number(point['density_kg_m3'], f'{name}: densita')
+                v = flow/(math.pi*diameter**2/4)
+                if 'full_disk_velocity_m_s' in point and not math.isclose(
+                        number(point['full_disk_velocity_m_s'], 'velocita disco'), v, rel_tol=1e-4):
+                    raise ValueError('Velocita sul disco incompatibile con portata e diametro.')
+                point['full_disk_velocity_m_s'] = v
+            else:
+                number(point["minimum_rotor_thrust_N"], f"{name}: spinta")
+                number(point["axial_inlet_velocity_m_s"], f"{name}: velocità", strict=False)
             number(point["duration_s"], f"{name}: durata")
     except (KeyError, TypeError) as exc:
         raise ValueError(f"Struttura input incompleta o non valida: {exc}") from exc
     data['sizing'] = sizing_settings(data)
+    if pressure_mode(data) and data['sizing']['loss_model'] != 'none':
+        raise ValueError('pressure_flow non supporta perdite Prandtl da rotore libero.')
     return data
