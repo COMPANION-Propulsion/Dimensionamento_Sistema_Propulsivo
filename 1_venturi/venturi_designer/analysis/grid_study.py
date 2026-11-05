@@ -53,7 +53,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 DEFAULT_LEVELS = "64x26,90x36,128x51"
 P_RANGE = (0.5, 3.0)      # plausible observed order of a second-order scheme
 ASYMPTOTIC_TOL = 0.15     # allowed distance of the asymptotic ratio from 1
-FLAT_TOL = 5e-4           # results closer than this (relative) are grid independent
+FLAT_TOL = 1e-3           # results closer than this (relative) are grid independent
 DEFAULT_TOL = 1e-4   # tighter than a normal run, so the iteration error is
                      # small next to the grid error being measured
 

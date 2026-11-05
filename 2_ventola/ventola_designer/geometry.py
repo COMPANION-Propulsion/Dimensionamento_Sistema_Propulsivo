@@ -46,19 +46,36 @@ def interpolate(nodes, values, s):
     return values[-1]
 
 
+def blade_nodes(rotor):
+    """Nodi lungo l'apertura per corda e calettamento (interpolazione lineare fra nodi).
+
+    Meno nodi = pala piu regolare: 2 nodi danno corda e calettamento lineari,
+    senza salti fra radice e meta pala che il BEMT 2D non vede ma un flusso 3D
+    pagherebbe in perdite. Default 4 (i test e il modo storico).
+    """
+    n = int(rotor.get("blade_nodes", 4))
+    if n < 2:
+        raise ValueError("Servono almeno 2 nodi lungo la pala.")
+    if n == 4:
+        return [0.0, 0.35, 0.7, 1.0]
+    return [i/(n-1) for i in range(n)]
+
+
 def initial_design(case, profile, blades):
     """Seme geometrico riproducibile; NON risolve il dimensionamento."""
     rotor = case["rotor"]
     if profile not in rotor["airfoil_candidates"] or blades not in rotor["blade_count_candidates"]:
         raise ValueError("Profilo o numero di pale non ammesso dal caso.")
     diameter = rotor["outer_diameter_m"]
+    nodes = blade_nodes(rotor)
+    seed_s = [0.0, 0.35, 0.7, 1.0]
     return {
         "status": "initial_geometry_not_optimized", "profile": profile, "blade_count": blades,
         "outer_diameter_m": diameter,
         "hub_diameter_m": sum(rotor["hub_diameter_bounds_m"])/2,
-        "span_nodes": [0.0, 0.35, 0.7, 1.0],
-        "chord_m": [diameter*f for f in (0.10, 0.16, 0.12, 0.06)],
-        "pitch_deg": [40.0, 30.0, 22.0, 15.0],
+        "span_nodes": nodes,
+        "chord_m": [diameter*interpolate(seed_s, [0.10, 0.16, 0.12, 0.06], s) for s in nodes],
+        "pitch_deg": [interpolate(seed_s, [40.0, 30.0, 22.0, 15.0], s) for s in nodes],
         "note": "Corde e angoli sono un seme illustrativo modificabile, non derivato dalla spinta."
     }
 

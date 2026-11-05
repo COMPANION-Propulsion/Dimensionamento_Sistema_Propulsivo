@@ -24,12 +24,12 @@ from typing import Dict, Sequence
 import numpy as np
 
 from ..export.fields import duct_fields
-from ..export.paraview import export_paraview_2d
+from ..export.paraview import export_paraview_2d, export_paraview_3d
 from ..export.plots_duct import plot_axial, plot_map, plot_wall
 from ..optimization.shape_opt import DuctProblem, for_grid, report
 from ..optimization.target_thrust import load_design
 
-GRID = (128, 51)
+GRID = (90, 36)        # one level of the grid study: fast, enough for the comparison
 
 
 def radial_profile(r_over_R: Sequence[float], dp: Sequence[float], dp_ref: float,
@@ -71,8 +71,11 @@ def solve_with_fan(design_file: str, r_over_R: Sequence[float], dp_axial: Sequen
     c = F["cells"]
     extra = {"Total_Pressure": c["p0"], "Mach": c["mach"],
              "Turbulent_Viscosity_Ratio": c["nu_ratio"]}
-    files = [export_paraview_2d(fan.solve(design).system.mesh, c["uz"], c["ur"],
-                                c["p"] + case.p_amb, cfd_dir, extra, name="condotto_con_ventola.vts")]
+    mesh = fan.solve(design).system.mesh
+    files = [export_paraview_2d(mesh, c["uz"], c["ur"], c["p"] + case.p_amb, cfd_dir, extra,
+                                name="condotto_con_ventola_2d.vts"),
+             export_paraview_3d(mesh, c["uz"], c["ur"], c["p"] + case.p_amb, cfd_dir, n_theta=48,
+                                extra=extra, name="condotto_con_ventola_3d.vts")]
     j = lambda n: os.path.join(graph_dir, n)
     files += [
         plot_map(F, "p0", "p0 - p_amb [Pa]", "Con la ventola vera: pressione totale",

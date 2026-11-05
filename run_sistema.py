@@ -3,15 +3,17 @@ run_sistema.py
 ==============
 Whole chain of the propulsion sizing, from input.py to risultati/<caso>/.
 
-    1. 0_spinta    mission -> thrust per nozzle            -> 1_spinta/spinta.json
-    2. 1_venturi   thrust, size -> duct, fan dp and size   -> 2_venturi/00_sintesi/risultati.json
-    3. 2_ventola   dp, diameter, flow rate -> blades, rpm  -> 3_ventola/00_sintesi/report.json
-                   then thrust against shaft power, 0..P_max -> 3_ventola/.../curva_potenza.*
-    4. summary of the three steps                          -> RIEPILOGO.md
+    1. 0_spinta    mission -> thrust per nozzle             -> 1_spinta/
+    2. 1_venturi   thrust, size -> duct, fan dp and size    -> 2_venturi/   (duct, uniform disk)
+    3. 2_ventola   dp, diameter, flow -> rotor, stator, rpm -> 3_ventola/   (fan alone)
+    4. 3_sistema   duct + fan together: power in the manoeuvre, power curve, stator yes/no,
+                   duct with the real fan, assembly CAD, 3D views, ParaView -> 4_sistema/
+    5. summary of the case                                  -> RIEPILOGO.md
 
     python run_sistema.py                 the whole chain
-    python run_sistema.py --solo ventola  one step only (spinta | venturi | ventola)
+    python run_sistema.py --solo sistema  one step only (spinta | venturi | ventola | sistema)
 
+Each step writes only what is its own: what needs both duct and fan is in 4_sistema/.
 The fan input is written from VENTOLA of input.py into risultati/<caso>/input_ventola.json,
 with the explicit path of the venturi of THIS case (never "the latest one").
 """
@@ -25,16 +27,16 @@ import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE = os.path.join(ROOT, "input.py")
-for folder in ("0_spinta", "1_venturi", "2_ventola"):
+for folder in ("0_spinta", "1_venturi", "2_ventola", "3_sistema"):
     sys.path.insert(0, os.path.join(ROOT, folder))
 
-STEPS = ("spinta", "venturi", "ventola")
+STEPS = ("spinta", "venturi", "ventola", "sistema")
 FAN_DEFAULTS = {
     "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25],
     "statore": {"presente": True, "pale": None, "solidita": 1.0, "profilo": "NACA4412",
                 "gioco_assiale_m": 0.002},
     "giri_min_max_rpm": [5000.0, 30000.0], "calettamento_min_max_deg": [0.0, 75.0],
-    "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
+    "pale_candidate": [2, 3, 4, 5, 6, 7, 8], "nodi_pala": 2,
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0, "gioco_punta_m": 0.0005, "potenza_max_W": None, "jobs": None, "sizing": {},
 }
@@ -83,6 +85,7 @@ def fan_input(input_file: str) -> str:
                   "blade_count_candidates": list(v["pale_candidate"]),
                   "airfoil_candidates": list(v["profili_candidati"]),
                   "profile_constant_along_span": True,
+                  "blade_nodes": int(v["nodi_pala"]),
                   "shaft_speed_bounds_rpm": list(v["giri_min_max_rpm"])},
         "operating_points": [{"name": "venturi", "venturi_result": venturi,
                               "duration_s": v["durata_s"]}],
@@ -100,6 +103,7 @@ def fan_input(input_file: str) -> str:
 
 
 def run_ventola(input_file: str) -> int:
+    """Fan sizing (rotor + stator + CAD), then the boundary layer of its sections."""
     from spinta_designer import caso
     from ventola_designer.optimizer import main as size_main
     try:
@@ -107,8 +111,7 @@ def run_ventola(input_file: str) -> int:
     except ValueError as e:
         print(f"Error: {e}")
         return 1
-    fan = caso.load_input(input_file)["VENTOLA"]
-    jobs = fan.get("jobs")
+    jobs = caso.load_input(input_file)["VENTOLA"].get("jobs")
     print(f"Fan input: {caso.shown(path)}")
     try:
         rc = size_main(["--input", path] + (["--jobs", str(jobs)] if jobs else []))
@@ -116,67 +119,36 @@ def run_ventola(input_file: str) -> int:
         return int(e.code or 1)
     if rc != 0:
         return rc
-    from ventola_designer.power_curve import export_power_curve
-    root = caso.case_dir(input_file)
-    print("\nPower curve (fixed duct and blades, variable rpm)")
-    try:
-        curve = export_power_curve(os.path.join(root, caso.STEP_DIRS["ventola"]),
-                                   os.path.join(root, caso.STEP_DIRS["venturi"], "00_sintesi",
-                                                "risultati.json"), fan.get("potenza_max_W"))
-    except ValueError as e:
-        print(f"Error: {e}")
-        return 1
-    last = curve["righe"][-1]
-    print(f"  {len(curve['righe'])} points, up to {last['potenza_albero_W']:.3f} W -> "
-          f"{last['spinta_ugello_N']:.4f} N")
-    fan_analysis(root)
+    fan_dir = os.path.join(caso.case_dir(input_file), caso.STEP_DIRS["ventola"])
+    print("\nBoundary layer of rotor and stator sections (XFOIL)")
+    try:                               # analysis only: the sizing results stay valid
+        from ventola_designer.cp_map import export_cp
+        export_cp(os.path.join(fan_dir, "00_sintesi", "report.json"),
+                  os.path.join(ROOT, "2_ventola", "tools", "xfoil", "dist", "xfoil.exe"), 17)
+    except (OSError, ValueError) as e:
+        print(f"  skipped: {e}")
     return 0
 
 
-def fan_analysis(root: str) -> None:
-    """Boundary layer of the blades (XFOIL) and duct solved with the real fan.
-
-    Failures here are reported and do not stop the chain: the sizing is done.
-    """
+def run_sistema_step(input_file: str) -> int:
+    """Duct and fan together: everything that needs both, in 4_sistema/."""
     from spinta_designer import caso
-    fan_dir = os.path.join(root, caso.STEP_DIRS["ventola"])
-    report_file = os.path.join(fan_dir, "00_sintesi", "report.json")
-    xfoil = os.path.join(ROOT, "2_ventola", "tools", "xfoil", "dist", "xfoil.exe")
-    print("\nBoundary layer of rotor and stator sections (XFOIL)")
-    try:
-        from ventola_designer.cp_map import export_cp
-        export_cp(report_file, xfoil, 17)
-    except (OSError, ValueError) as e:
-        print(f"  skipped: {e}")
-    print("\nDuct solved again with the dp profile of the real fan")
-    try:
-        from pathlib import Path
-        from ventola_designer.polars import PolarGrid
-        from ventola_designer.pressure_bemt import solve_pressure
-        from venturi_designer.analysis.fan_coupled import solve_with_fan
-        with open(report_file, encoding="utf-8") as fh:
-            rep = json.load(fh)
-        case, d = rep["input_case"], rep["best"]["design"]
-        polar = PolarGrid.load(Path(ROOT, "2_ventola", "ventola_designer", "airfoils",
-                                    "polars_neuralfoil", f"{d['profile']}.json"))
-        res = solve_pressure(case, {**d, "rpm": rep["best"]["cases"][0]["rpm"]},
-                             case["operating_points"][0], polar, stations=64)
-        R = d["outer_diameter_m"] / 2
-        out = solve_with_fan(
-            os.path.join(root, caso.STEP_DIRS["venturi"], "05_convergenza", "design.json"),
-            [row["r_m"] / R for row in res["local"]],
-            [row["axial_total_pressure_rise_Pa"] for row in res["local"]],
-            d["hub_diameter_m"] / d["outer_diameter_m"],
-            os.path.join(fan_dir, "04_cfd", "condotto_con_ventola"), os.path.join(fan_dir, "01_grafici"))
-        print(f"  thrust {out['spinta_con_ventola_N']:.4f} N with the fan, "
-              f"{out['spinta_disco_uniforme_N']:.4f} N with the uniform disk "
-              f"({out['scarto_spinta_pct']:+.2f} %)")
-    except Exception as e:             # analysis only: the sizing results stay valid
-        print(f"  skipped: {e}")
+    from sistema_designer import run
+    root = caso.case_dir(input_file)
+    fan_report = os.path.join(root, caso.STEP_DIRS["ventola"], "00_sintesi", "report.json")
+    if not os.path.isfile(fan_report):
+        print("Error: no fan in this case: run the fan step first.")
+        return 1
+    with open(fan_report, encoding="utf-8") as fh:
+        if not json.load(fh).get("best"):
+            print("Error: the fan step found no accepted design: nothing to put together.")
+            return 2
+    log = run(root, caso.load_input(input_file)["VENTOLA"].get("potenza_max_W"))
+    return 0 if not log.get("errori") else 3
 
 
 def write_summary(input_file: str) -> None:
-    """RIEPILOGO.md of the case: the key numbers of the three steps on one page."""
+    """RIEPILOGO.md of the case: the key numbers of the four steps on one page."""
     from spinta_designer import caso
     root = caso.case_dir(input_file)
 
@@ -190,16 +162,27 @@ def write_summary(input_file: str) -> None:
     s = load("1_spinta", "spinta.json")
     v = load("2_venturi", "00_sintesi", "risultati.json")
     f = load("3_ventola", "00_sintesi", "report.json")
+    m = load("4_sistema", "00_sintesi", "potenza_manovra.json")
+    cmp = load("4_sistema", "00_sintesi", "confronto_statore.json")
+    curve = load("4_sistema", "00_sintesi", "curva_potenza.json")
+    cpl = load("4_sistema", "04_cfd", "condotto_con_ventola.json")
     lines = [f"# Riepilogo del caso `{os.path.basename(root)}`", ""]
+    if m:
+        lines += ["## In breve", "",
+                  f"- **picco di potenza {m['picco_W']:.3f} W** all'albero per faccia "
+                  f"({m['ugelli_per_faccia']} ugelli × {m['potenza_ugello_W']:.3f} W, {m['rpm']:.0f} rpm), "
+                  f"durante accelerazione e frenata",
+                  f"- energia della manovra {m['energia_manovra_J']:.2f} J, "
+                  f"spinta per ugello {m['spinta_ugello_N']:.4g} N", ""]
     if s:
-        lines += ["## 1. Spinta", "",
+        lines += ["## 1. Spinta (`1_spinta/`)", "",
                   f"- {s['input']['distanza']:g} m in {s['input']['tempo']:g} s, "
                   f"{s['input']['massa']:g} kg, profilo `{s['input']['profilo']}`",
                   f"- spinta della faccia {s['T_totale_N']:.4g} N, "
                   f"**per ugello {s['T_ugello_N']:.4g} N** ({s['input']['n_ugelli']} ugelli)", ""]
     if v:
         g, ve = v["geometria"], v["ventola"]
-        lines += ["## 2. Condotto", "",
+        lines += ["## 2. Condotto (`2_venturi/`, disco uniforme)", "",
                   f"- **Δp disco {ve['dp_disk_Pa']:.3f} ± {ve['dp_errore_Pa']:.3f} Pa**, "
                   f"portata {ve['portata_m3_s'] * 1e3:.3f} L/s, potenza all'aria "
                   f"{ve['potenza_fluido_W']:.4f} W",
@@ -211,28 +194,19 @@ def write_summary(input_file: str) -> None:
                   f"{'affidabile' if v['spinta']['affidabile'] else 'NON affidabile'}", ""]
     if f:
         best = f.get("best")
-        lines += ["## 3. Ventola", ""]
+        lines += ["## 3. Ventola (`3_ventola/`)", ""]
         if best:
             d, c = best["design"], best["cases"][0]
-            lines += [f"- {d['profile']}, {d['blade_count']} pale, mozzo "
-                      f"{d['hub_diameter_m'] * 1e3:.1f} mm, {c['rpm']:.0f} rpm",
-                      f"- Δp assiale {c.get('axial_total_pressure_rise_Pa', float('nan')):.3f} Pa "
-                      f"(con swirl {c['total_pressure_rise_Pa']:.3f} Pa)",
-                      f"- **potenza all'albero {c['shaft_power_W']:.4f} W**, rendimento "
-                      f"{c['total_pressure_efficiency'] * 100:.1f} %, coppia {c['torque_Nm'] * 1e3:.3f} mN·m"]
-            curve = load("3_ventola", "00_sintesi", "curva_potenza.json")
-            if curve:
-                last = curve["righe"][-1]
-                lines += [f"- curva di potenza: fino a {last['potenza_albero_W']:.3f} W la spinta "
-                          f"dell'ugello arriva a {last['spinta_ugello_N']:.4g} N "
-                          f"(`3_ventola/01_grafici/curva_potenza.svg`)",
-                          "- CAD: `3_ventola/03_cad/ventola_A` e `ventola_B_speculare` (STEP, STL), "
-                          "per ugelli vicini controrotanti"]
+            lines += [f"- rotore {d['profile']}, {d['blade_count']} pale, mozzo "
+                      f"{d['hub_diameter_m'] * 1e3:.1f} mm, {c['rpm']:.0f} rpm; corda "
+                      f"{' → '.join(f'{x * 1e3:.1f}' for x in d['chord_m'])} mm, calettamento "
+                      f"{' → '.join(f'{x:.0f}' for x in d['pitch_deg'])}° dalla radice alla punta",
+                      f"- Δp assiale {c.get('axial_total_pressure_rise_Pa', float('nan')):.3f} Pa, "
+                      f"**potenza all'albero {c['shaft_power_W']:.4f} W** per ugello, "
+                      f"coppia {c['torque_Nm'] * 1e3:.3f} mN·m"]
             if c.get("stator_enabled"):
-                lines += [f"- statore: {c['stator_vanes']} pale, recupero dello swirl "
-                          f"{100 * c['stator_swirl_recovery']:.0f} % (negativo = l'attrito costa più "
-                          f"dello swirl), coppia netta {c['net_torque_Nm'] * 1e3:.3f} mN·m "
-                          f"su {c['torque_Nm'] * 1e3:.3f} del rotore"]
+                lines += [f"- statore {c['stator_vanes']} pale: coppia netta {c['net_torque_Nm'] * 1e3:.3f} "
+                          f"mN·m su {c['torque_Nm'] * 1e3:.3f} del rotore"]
             cad = f.get("cad") or {}
             if (cad.get("stator") or {}).get("avviso"):
                 lines += [f"- **avviso CAD:** {cad['stator']['avviso']}"]
@@ -241,20 +215,31 @@ def write_summary(input_file: str) -> None:
             bl = load("3_ventola", "04_cfd", "strato_limite", "cp_manifest.json")
             if bl:
                 for name, key in (("rotore", "sections"), ("statore", "stator_sections")):
-                    sec = [s for s in bl["points"][0].get(key, []) if s.get("separation")]
+                    sec = [x for x in bl["points"][0].get(key, []) if x.get("separation")]
                     if sec:
-                        worst = min(s["separation"]["dorso"]["x_sep"] or 1.0 for s in sec)
+                        worst = min(x["separation"]["dorso"]["x_sep"] or 1.0 for x in sec)
                         lines += [f"- strato limite {name} (XFOIL): distacco sul dorso da x/c = "
-                                  f"{worst:.2f} nella sezione peggiore "
-                                  f"(`3_ventola/01_grafici/strato_limite_00.svg`)"]
-            cpl = load("3_ventola", "04_cfd", "condotto_con_ventola", "condotto_con_ventola.json")
-            if cpl:
-                lines += [f"- condotto con la ventola vera: spinta {cpl['spinta_con_ventola_N']:.4g} N "
-                          f"({cpl['scarto_spinta_pct']:+.1f} % sul disco uniforme), "
-                          f"{cpl['celle_flusso_invertito']} celle con flusso invertito"]
+                                  f"{worst:.2f} nella sezione peggiore"]
         else:
             lines += ["- nessun candidato accettato: vedi `3_ventola/00_sintesi/RISULTATO.md`"]
         lines += [""]
+    if m or cmp or curve or cpl:
+        lines += ["## 4. Sistema (`4_sistema/`)", ""]
+        if curve:
+            last = curve["righe"][-1]
+            lines += [f"- curva di potenza: fino a {last['potenza_albero_W']:.3f} W per ugello la "
+                      f"spinta arriva a {last['spinta_ugello_N']:.4g} N"]
+        if cmp and "differenza_potenza_pct" in cmp:
+            con, senza = [r for r in cmp["varianti"] if "errore" not in r]
+            lines += [f"- con lo statore: {con['potenza_albero_W']:.3f} W e coppia netta "
+                      f"{con['coppia_netta_Nm'] * 1e3:.3f} mN·m; senza: {senza['potenza_albero_W']:.3f} W e "
+                      f"{senza['coppia_netta_Nm'] * 1e3:.3f} mN·m ({cmp['differenza_potenza_pct']:+.1f} % di potenza)"]
+        if cpl:
+            lines += [f"- condotto con la ventola vera: spinta {cpl['spinta_con_ventola_N']:.4g} N "
+                      f"({cpl['scarto_spinta_pct']:+.1f} % sul disco uniforme), "
+                      f"{cpl['celle_flusso_invertito']} celle con flusso invertito"]
+        lines += ["- assieme CAD, viste 3D e ParaView (`04_cfd/sistema.pvd`): vedi "
+                  "`4_sistema/00_sintesi/RISULTATO.md`", ""]
     if v and f and f.get("best") and "perdite" in v:
         c, pl = f["best"]["cases"][0], v["perdite"]
         q = c["volume_flow_m3_s"]
@@ -273,7 +258,7 @@ def write_summary(input_file: str) -> None:
                   f"Potenza all'albero {c['shaft_power_W']:.4f} W, di cui utile al getto "
                   f"{c['shaft_power_W'] - total * q:.4f} W. Bocca d'imbocco non inclusa.", ""]
     lines += ["Dettagli: `1_spinta/RISULTATO.md`, `2_venturi/00_sintesi/RISULTATO.md`, "
-              "`3_ventola/00_sintesi/RISULTATO.md`.", ""]
+              "`3_ventola/00_sintesi/RISULTATO.md`, `4_sistema/00_sintesi/RISULTATO.md`.", ""]
     path = os.path.join(root, "RIEPILOGO.md")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
@@ -286,14 +271,16 @@ def main(argv=None) -> int:
     p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
     args = p.parse_args(argv)
 
-    run = {"spinta": run_spinta, "venturi": run_venturi, "ventola": run_ventola}
+    run = {"spinta": run_spinta, "venturi": run_venturi, "ventola": run_ventola,
+           "sistema": run_sistema_step}
     for step in STEPS:
         if args.solo not in (None, step):
             continue
         print("\n" + "#" * 66 + f"\n#  {step.upper()}\n" + "#" * 66)
         rc = run[step](args.input)
-        if rc not in (0, 3):           # 3: venturi done, with warnings in RISULTATO.md
+        if rc not in (0, 3):           # 3: done, with warnings in the RISULTATO.md of the step
             print(f"\nStep '{step}' failed (code {rc}): chain stopped.")
+            write_summary(args.input)
             return rc
     write_summary(args.input)
     return 0

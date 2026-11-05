@@ -7,7 +7,7 @@ All the outputs live in one folder at the project root:
 
     risultati/<nome_caso>/
         caso.json, input_usato.py
-        1_spinta/  2_venturi/  3_ventola/
+        1_spinta/  2_venturi/  3_ventola/  4_sistema/
 
 The case name is CASO["nome"] of input.py, or, when that is None, a name
 built from the inputs that identify the case plus a short hash of all the
@@ -30,7 +30,8 @@ from typing import Dict, Optional
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 INPUT_FILE = os.path.join(ROOT, "input.py")
 RESULTS_DIR = os.path.join(ROOT, "risultati")
-STEP_DIRS = {"spinta": "1_spinta", "venturi": "2_venturi", "ventola": "3_ventola"}
+STEP_DIRS = {"spinta": "1_spinta", "venturi": "2_venturi", "ventola": "3_ventola",
+             "sistema": "4_sistema"}
 HASHED = ("SPINTA", "VENTURI")      # dictionaries that define the case
 
 

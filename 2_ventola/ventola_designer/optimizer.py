@@ -1,6 +1,6 @@
 """Ottimizzazione locale SLSQP del modello rotorico preliminare.
 
-Variabili normalizzate: mozzo, quattro corde, quattro calettamenti, rpm per punto.
+Variabili normalizzate: mozzo, n corde, n calettamenti (n = nodi della pala), rpm per punto.
 Profilo e numero intero di pale sono enumerati esternamente. Nessuna CFD.
 """
 import argparse
@@ -15,7 +15,7 @@ import numpy as np
 from scipy.optimize import minimize
 from .bemt import solve, ModelDomainError
 from .config import load_case, load_catalog
-from .geometry import initial_design, blade_sections, interpolate
+from .geometry import initial_design, blade_sections, blade_nodes, interpolate
 from .polars import PolarGrid
 from .export import export_geometry
 from .settings import sizing_settings
@@ -28,8 +28,9 @@ from .duty import metric_key, target_key, margin_key, grid_limit_key
 def variable_bounds(case):
     d = case['rotor']['outer_diameter_m']
     cfg = sizing_settings(case)
+    n = len(blade_nodes(case['rotor']))
     return np.array([case['rotor']['hub_diameter_bounds_m']]
-                    + [[v*d for v in cfg['chord_over_D_bounds']]]*4 + [cfg['pitch_deg_bounds']]*4
+                    + [[v*d for v in cfg['chord_over_D_bounds']]]*n + [cfg['pitch_deg_bounds']]*n
                     + [case['rotor']['shaft_speed_bounds_rpm']]*len(case['operating_points']))
 
 
@@ -37,8 +38,9 @@ def decode(case, profile, blades, x):
     limits = variable_bounds(case)
     values = limits[:,0] + np.asarray(x)*(limits[:,1]-limits[:,0])
     design = initial_design(case, profile, blades)
-    design.update(hub_diameter_m=float(values[0]), chord_m=values[1:5].tolist(),
-                  pitch_deg=values[5:9].tolist(), rpm_by_point=values[9:].tolist(),
+    n = len(design['span_nodes'])
+    design.update(hub_diameter_m=float(values[0]), chord_m=values[1:1+n].tolist(),
+                  pitch_deg=values[1+n:1+2*n].tolist(), rpm_by_point=values[1+2*n:].tolist(),
                   status='SLSQP_candidate', note='Geometria parametrica; integrita meccanica non verificata.')
     return design
 
@@ -77,16 +79,20 @@ def evaluate(case, design, polar, stations=None):
 def seed_designs(case, profile, blades):
     cfg = sizing_settings(case)
     rng = np.random.default_rng(cfg['random_seed'])
-    size = 9+len(case['operating_points'])
+    nodes = blade_nodes(case['rotor'])
+    n = len(nodes)
+    size = 1+2*n+len(case['operating_points'])
+    seed_s = [0.0, 0.35, 0.7, 1.0]
     for i in range(cfg['seed_samples']):
         x = rng.uniform(.05,.95,size)
         if i<8:
             x[0]=.5
-            x[1:5]=.5 if i<4 else .75
-            x[5:9]=[.65,.5,.35,.25] if i<4 else [.5,.4,.3,.2]
-            x[9:]=(.2,.4,.6,.8)[i%4]
+            x[1:1+n]=.5 if i<4 else .75
+            pattern = [.65,.5,.35,.25] if i<4 else [.5,.4,.3,.2]
+            x[1+n:1+2*n]=[interpolate(seed_s, pattern, s) for s in nodes]
+            x[1+2*n:]=(.2,.4,.6,.8)[i%4]
         else:
-            x[5:9]=np.sort(x[5:9])[::-1]
+            x[1+n:1+2*n]=np.sort(x[1+n:1+2*n])[::-1]
         yield decode(case,profile,blades,x)
 
 

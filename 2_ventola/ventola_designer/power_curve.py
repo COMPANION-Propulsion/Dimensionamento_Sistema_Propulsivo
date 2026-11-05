@@ -186,16 +186,19 @@ def _xlsx(curve, path):
     wb.save(path)
 
 
-def export_power_curve(fan_dir, venturi_file, p_max=None):
-    """Calcola e scrive la curva per la ventola in fan_dir (cartella 3_ventola)."""
+def export_power_curve(fan_dir, venturi_file, p_max=None, out_dir=None):
+    """Calcola la curva della ventola in fan_dir e la scrive in out_dir (default fan_dir)."""
     fan_dir = Path(fan_dir)
+    out = Path(out_dir) if out_dir else fan_dir
+    for sub in ('00_sintesi', '01_grafici', '02_excel'):
+        (out/sub).mkdir(parents=True, exist_ok=True)
     report = json.loads((fan_dir/'00_sintesi'/'report.json').read_text(encoding='utf-8'))
     if not report.get('best'):
         raise ValueError('Nessuna ventola accettata: curva di potenza non calcolabile.')
     venturi = json.loads(Path(venturi_file).read_text(encoding='utf-8'))
     curve = power_curve(report, venturi, p_max)
-    (fan_dir/'00_sintesi'/'curva_potenza.json').write_text(
+    (out/'00_sintesi'/'curva_potenza.json').write_text(
         json.dumps(curve, indent=1, allow_nan=True, ensure_ascii=False), encoding='utf-8')
-    _plot(curve, fan_dir/'01_grafici'/'curva_potenza.svg')
-    _xlsx(curve, fan_dir/'02_excel'/'curva_potenza.xlsx')
+    _plot(curve, out/'01_grafici'/'curva_potenza.svg')
+    _xlsx(curve, out/'02_excel'/'curva_potenza.xlsx')
     return curve

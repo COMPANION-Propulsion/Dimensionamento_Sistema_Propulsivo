@@ -10,7 +10,7 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": "TEST_2",          # None = name built from the inputs + hash, or a string of your choice
+    "nome": "TEST_3",          # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
@@ -63,18 +63,23 @@ VENTURI = {
 VENTOLA = {
     # Diameter, dp, flow rate and density come from the venturi of the same case.
     "temperatura_K": 293.15,                 # air temperature, consistent with VENTURI["fluid"]
-    "mozzo_su_D": [0.15, 0.25],              # hub diameter / fan diameter, min and max
+    "mozzo_su_D": [0.20, 0.30],              # hub diameter / fan diameter, min and max
+                                             #   (about 8-12 mm: room for shaft and bearings)
     "statore": {                             # fixed vanes after the rotor (straighten the flow)
         "presente": True,                    #   False = rotor only, the swirl leaves with the jet
         "pale": None,                        #   vanes, None = first number >= 7 coprime with rotor
-        "solidita": 1.0,                     #   chord x vanes / circumference (0.6-1.5)
+        "solidita": 0.8,                     #   chord x vanes / circumference (0.6-1.5); low Re:
+                                             #   less vane area = less friction
         "profilo": "NACA4412",               #   section of the vanes
         "gioco_assiale_m": 0.002,            #   axial gap rotor -> stator [m]
     },
-    "giri_min_max_rpm": [5000.0, 30000.0],   # shaft speed bounds [rpm]
+    "giri_min_max_rpm": [5000.0, 40000.0],   # shaft speed bounds [rpm]; faster = higher Re
+                                             #   on the blades = less separation
     "calettamento_min_max_deg": [0.0, 75.0], # blade pitch bounds [deg]; small hubs need a
                                              #   steep root (flow angle up to 60-70 deg)
-    "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
+    "pale_candidate": [3, 4, 5, 6, 7],
+    "nodi_pala": 2,                          # nodes of chord and pitch along the blade:
+                                             #   2 = linear (most regular), 3-4 = more freedom
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0,                         # duration of the operating point (scales the energy)
     "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
