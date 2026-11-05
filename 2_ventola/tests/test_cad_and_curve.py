@@ -51,15 +51,22 @@ class CadAndCurveTests(unittest.TestCase):
         self.assertAlmostEqual(q, .03, delta=1e-6)
         self.assertAlmostEqual(dp, duct['dp'], delta=1e-6*duct['dp'])
 
-    def test_stator_recovers_part_of_the_swirl(self):
+    def test_stator_removes_the_swirl_and_the_torque(self):
         free = self._design_point()
-        self.case['stator'] = dict(swirl_recovery=0.8)
+        self.case['stator'] = dict(enabled=True, solidity=1.0, profile='NACA4412')
         with_stator = self._design_point()
         self.case.pop('stator')
-        gain = with_stator['axial_total_pressure_rise_Pa'] - free['axial_total_pressure_rise_Pa']
-        swirl = free['swirl_power_W']/free['volume_flow_m3_s']
-        self.assertAlmostEqual(gain, 0.8*swirl, delta=1e-9*swirl)
+        self.assertEqual(with_stator['stator_vanes'], 7)          # first >= 7 coprime with 3
         self.assertEqual(with_stator['shaft_power_W'], free['shaft_power_W'])
+        # the stator takes part of the rotor torque (all of it unless it stalls)
+        self.assertGreaterEqual(with_stator['net_torque_Nm'], 0.0)
+        self.assertLess(with_stator['net_torque_Nm'], free['torque_Nm'])
+        # it cannot give back more than the swirl, and it pays its own friction
+        swirl = free['swirl_power_W']/free['volume_flow_m3_s']
+        loss = with_stator['stator_loss_power_W']/free['volume_flow_m3_s']
+        gain = with_stator['axial_total_pressure_rise_Pa'] - free['axial_total_pressure_rise_Pa']
+        self.assertLessEqual(gain, swirl - loss + 1e-9)
+        self.assertGreater(loss, 0.0)
 
     def test_power_curve_from_zero_to_p_max(self):
         d = self._design_point()

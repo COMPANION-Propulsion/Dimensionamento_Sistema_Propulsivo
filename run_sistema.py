@@ -30,8 +30,11 @@ for folder in ("0_spinta", "1_venturi", "2_ventola"):
 
 STEPS = ("spinta", "venturi", "ventola")
 FAN_DEFAULTS = {
-    "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25], "recupero_swirl_statore": 0.0,
-    "giri_min_max_rpm": [5000.0, 30000.0], "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
+    "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25],
+    "statore": {"presente": True, "pale": None, "solidita": 1.0, "profilo": "NACA4412",
+                "gioco_assiale_m": 0.002},
+    "giri_min_max_rpm": [5000.0, 30000.0], "calettamento_min_max_deg": [0.0, 75.0],
+    "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0, "gioco_punta_m": 0.0005, "potenza_max_W": None, "jobs": None, "sizing": {},
 }
@@ -65,8 +68,10 @@ def fan_input(input_file: str) -> str:
     lo, hi = v["mozzo_su_D"]
     if not 0.0 < lo < hi < 1.0:
         raise ValueError(f"VENTOLA['mozzo_su_D'] = {v['mozzo_su_D']}: need 0 < min < max < 1.")
-    if not 0.0 <= v["recupero_swirl_statore"] <= 1.0:
-        raise ValueError("VENTOLA['recupero_swirl_statore'] must be between 0 and 1.")
+    st = {**FAN_DEFAULTS["statore"], **v["statore"]}
+    unknown = sorted(set(st) - set(FAN_DEFAULTS["statore"]))
+    if unknown:
+        raise ValueError(f"Unknown keys in VENTOLA['statore']: {', '.join(unknown)}.")
     data = {
         "description": "Written by run_sistema.py from VENTOLA of input.py.",
         "design_mode": "pressure_flow",
@@ -81,9 +86,12 @@ def fan_input(input_file: str) -> str:
                   "shaft_speed_bounds_rpm": list(v["giri_min_max_rpm"])},
         "operating_points": [{"name": "venturi", "venturi_result": venturi,
                               "duration_s": v["durata_s"]}],
-        "sizing": {"loss_model": "none", **v["sizing"]},
+        "sizing": {"loss_model": "none",
+                   "pitch_deg_bounds": list(v["calettamento_min_max_deg"]), **v["sizing"]},
         "cad": {"tip_clearance_m": v["gioco_punta_m"]},
-        "stator": {"swirl_recovery": v["recupero_swirl_statore"]},
+        "stator": {"enabled": bool(st["presente"]), "vanes": st["pale"],
+                   "solidity": st["solidita"], "profile": st["profilo"],
+                   "axial_gap_m": st["gioco_assiale_m"]},
     }
     path = os.path.join(root, "input_ventola.json")
     with open(path, "w", encoding="utf-8") as fh:
@@ -121,7 +129,50 @@ def run_ventola(input_file: str) -> int:
     last = curve["righe"][-1]
     print(f"  {len(curve['righe'])} points, up to {last['potenza_albero_W']:.3f} W -> "
           f"{last['spinta_ugello_N']:.4f} N")
+    fan_analysis(root)
     return 0
+
+
+def fan_analysis(root: str) -> None:
+    """Boundary layer of the blades (XFOIL) and duct solved with the real fan.
+
+    Failures here are reported and do not stop the chain: the sizing is done.
+    """
+    from spinta_designer import caso
+    fan_dir = os.path.join(root, caso.STEP_DIRS["ventola"])
+    report_file = os.path.join(fan_dir, "00_sintesi", "report.json")
+    xfoil = os.path.join(ROOT, "2_ventola", "tools", "xfoil", "dist", "xfoil.exe")
+    print("\nBoundary layer of rotor and stator sections (XFOIL)")
+    try:
+        from ventola_designer.cp_map import export_cp
+        export_cp(report_file, xfoil, 17)
+    except (OSError, ValueError) as e:
+        print(f"  skipped: {e}")
+    print("\nDuct solved again with the dp profile of the real fan")
+    try:
+        from pathlib import Path
+        from ventola_designer.polars import PolarGrid
+        from ventola_designer.pressure_bemt import solve_pressure
+        from venturi_designer.analysis.fan_coupled import solve_with_fan
+        with open(report_file, encoding="utf-8") as fh:
+            rep = json.load(fh)
+        case, d = rep["input_case"], rep["best"]["design"]
+        polar = PolarGrid.load(Path(ROOT, "2_ventola", "ventola_designer", "airfoils",
+                                    "polars_neuralfoil", f"{d['profile']}.json"))
+        res = solve_pressure(case, {**d, "rpm": rep["best"]["cases"][0]["rpm"]},
+                             case["operating_points"][0], polar, stations=64)
+        R = d["outer_diameter_m"] / 2
+        out = solve_with_fan(
+            os.path.join(root, caso.STEP_DIRS["venturi"], "05_convergenza", "design.json"),
+            [row["r_m"] / R for row in res["local"]],
+            [row["axial_total_pressure_rise_Pa"] for row in res["local"]],
+            d["hub_diameter_m"] / d["outer_diameter_m"],
+            os.path.join(fan_dir, "04_cfd", "condotto_con_ventola"), os.path.join(fan_dir, "01_grafici"))
+        print(f"  thrust {out['spinta_con_ventola_N']:.4f} N with the fan, "
+              f"{out['spinta_disco_uniforme_N']:.4f} N with the uniform disk "
+              f"({out['scarto_spinta_pct']:+.2f} %)")
+    except Exception as e:             # analysis only: the sizing results stay valid
+        print(f"  skipped: {e}")
 
 
 def write_summary(input_file: str) -> None:
@@ -177,6 +228,30 @@ def write_summary(input_file: str) -> None:
                           f"(`3_ventola/01_grafici/curva_potenza.svg`)",
                           "- CAD: `3_ventola/03_cad/ventola_A` e `ventola_B_speculare` (STEP, STL), "
                           "per ugelli vicini controrotanti"]
+            if c.get("stator_enabled"):
+                lines += [f"- statore: {c['stator_vanes']} pale, recupero dello swirl "
+                          f"{100 * c['stator_swirl_recovery']:.0f} % (negativo = l'attrito costa più "
+                          f"dello swirl), coppia netta {c['net_torque_Nm'] * 1e3:.3f} mN·m "
+                          f"su {c['torque_Nm'] * 1e3:.3f} del rotore"]
+            cad = f.get("cad") or {}
+            if (cad.get("stator") or {}).get("avviso"):
+                lines += [f"- **avviso CAD:** {cad['stator']['avviso']}"]
+            if cad.get("errore"):
+                lines += [f"- **CAD non scritto:** {cad['errore']}"]
+            bl = load("3_ventola", "04_cfd", "strato_limite", "cp_manifest.json")
+            if bl:
+                for name, key in (("rotore", "sections"), ("statore", "stator_sections")):
+                    sec = [s for s in bl["points"][0].get(key, []) if s.get("separation")]
+                    if sec:
+                        worst = min(s["separation"]["dorso"]["x_sep"] or 1.0 for s in sec)
+                        lines += [f"- strato limite {name} (XFOIL): distacco sul dorso da x/c = "
+                                  f"{worst:.2f} nella sezione peggiore "
+                                  f"(`3_ventola/01_grafici/strato_limite_00.svg`)"]
+            cpl = load("3_ventola", "04_cfd", "condotto_con_ventola", "condotto_con_ventola.json")
+            if cpl:
+                lines += [f"- condotto con la ventola vera: spinta {cpl['spinta_con_ventola_N']:.4g} N "
+                          f"({cpl['scarto_spinta_pct']:+.1f} % sul disco uniforme), "
+                          f"{cpl['celle_flusso_invertito']} celle con flusso invertito"]
         else:
             lines += ["- nessun candidato accettato: vedi `3_ventola/00_sintesi/RISULTATO.md`"]
         lines += [""]
@@ -187,9 +262,9 @@ def write_summary(input_file: str) -> None:
                 ("condotto: banda del disco", pl["disco_Pa"]),
                 ("condotto: disco → uscita", pl["valle_Pa"]),
                 ("ventola: attrito dei profili", c["profile_loss_power_W"] / q),
-                ("ventola: swirl in uscita" + (" (dopo lo statore)" if c.get("stator_swirl_recovery")
-                                                  else " (senza statore)"),
-                 c["swirl_power_W"] * (1.0 - c.get("stator_swirl_recovery", 0.0)) / q)]
+                *([("statore: attrito delle pale", c["stator_loss_power_W"] / q)]
+                  if c.get("stator_enabled") else
+                  [("ventola: swirl in uscita (senza statore)", c["swirl_power_W"] / q)])]
         total = sum(x for _, x in rows)
         lines += ["## Perdite di pressione totale", "",
                   "| dove | perdita [Pa] | potenza [W] |", "|---|---|---|",

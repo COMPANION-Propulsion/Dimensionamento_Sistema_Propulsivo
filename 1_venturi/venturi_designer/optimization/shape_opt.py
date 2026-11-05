@@ -18,6 +18,7 @@ Constraints, all written as g(x) >= 0 for SLSQP:
         overall length (at most L_max, at least L_min) and outer diameter of the
         tube with its bell mouth,
         no radius below the disk radius (the fan sits in the throat),
+        monotone intake (narrowing) and diffuser (widening),
         diffuser slope, intake slope, smooth control polygon
     flow (each one is an adjoint)
         wall friction above a limit in the diffuser, as a separation margin;
@@ -168,8 +169,12 @@ class DuctProblem:
     """Thrust and constraints of a shape, with their adjoint gradients."""
 
     def __init__(self, case: PropulsionCase, layout: MorphLayout, verbose: bool = False,
-                 Re_ref: Optional[float] = None):
+                 Re_ref: Optional[float] = None,
+                 disk_profile: Optional[Callable[[np.ndarray], np.ndarray]] = None):
         self.case = case
+        # dp of the disk across the radius / dp_disk, as a function of r / R_disk:
+        # None = uniform disk; a fan gives its own profile (0 inside the hub)
+        self.disk_profile = disk_profile
         self.layout = layout
         self.verbose = verbose
         # Reynolds number of the inlet profile, fixed for the whole optimisation
@@ -198,6 +203,8 @@ class DuctProblem:
         z0 = 0.5 * (g.z_a + g.z_b)
         s = DuctSystem(mesh, c, z0 - 0.5 * c.L_disk, z0 + 0.5 * c.L_disk, self.Re_ref)
         s.z_b = g.z_b
+        if self.disk_profile is not None:
+            s.force = s.force * np.asarray(self.disk_profile(mesh.eta_c))[None, :]
         return s
 
     def solve(self, d: np.ndarray) -> FlowSolution:
@@ -275,6 +282,10 @@ class DuctProblem:
             [(c.L_max - g.L_total - l_env) / c.L_max, (c.R_ext - r_env) / c.R_ext],
             [] if c.L_min is None else [(g.L_total + l_env - c.L_min) / c.L_max],
             (np.r_[up, down] - R_disk) / c.R_int_max,
+            # monotone walls: the intake only narrows towards the fan, the diffuser
+            # only widens. A monotone control polygon gives a monotone B-spline, so
+            # no bumps (they only add losses and separation risk).
+            -np.diff(c_up) / c.R_int_max, np.diff(c_down) / c.R_int_max,
             1.0 - dr_down / SLOPE_DIFFUSER, 1.0 + dr_down / SLOPE_DIFFUSER,
             1.0 - dr_up / SLOPE_INTAKE, 1.0 + dr_up / SLOPE_INTAKE,
             1.0 - bend / BEND_MAX, 1.0 + bend / BEND_MAX))

@@ -68,10 +68,13 @@ dell'ugello (tubo + pale) e quella sulle sole pale, da 0 a `VENTOLA["potenza_max
 ## Modello e limiti
 
 - Requisito sul Δp **assiale** (swirl escluso), lo stesso del disco del Venturi:
-  senza statore lo swirl esce col getto e non dà spinta. Con
-  `VENTOLA["recupero_swirl_statore"]` = r > 0 uno statore a valle recupera la
-  frazione r dell'energia dello swirl come pressione assiale (primo ordine: lo
-  statore non è progettato né disegnato nel CAD).
+  senza statore lo swirl esce col getto e non dà spinta.
+- **Statore** (`VENTOLA["statore"]`): schiera di pale fisse dopo il rotore,
+  progettata anello per anello (`stator.py`): CL che serve a togliere lo swirl,
+  incidenza e CD dalle polari, perdita di profilo, stallo se il CL non basta.
+  Entra nell'ottimizzazione del rotore, va nel CAD e annulla la coppia netta.
+  A Reynolds molto bassi l'attrito dello statore può costare più dello swirl che
+  recupera: il report lo mostra (recupero negativo).
 - Mozzo fra `VENTOLA["mozzo_su_D"]` volte il diametro della ventola.
 - Velocità uniforme sull'anello libero dal mozzo, ingresso senza swirl, densità
   costante. Perdite al mozzo, alle pareti e di gioco di punta non modellate.

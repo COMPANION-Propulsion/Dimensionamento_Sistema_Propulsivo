@@ -15,7 +15,8 @@ def organize_results(directory):
                'optimization.json': '05_convergenza', 'paraview': '04_cfd'}
     mapping.update({p.name: '03_cad' for p in root.glob('NACA*.dat')})
     mapping['CAD_info.json'] = '03_cad'
-    mapping.update({f'{n}.{e}': '03_cad' for n in ('pala', 'ventola_A', 'ventola_B_speculare')
+    mapping.update({f'{n}.{e}': '03_cad' for n in ('pala', 'ventola_A', 'ventola_B_speculare',
+                                                     'statore_A', 'statore_B_speculare')
                     for e in ('step', 'stl')})
     moves = []
     for name, folder in mapping.items():

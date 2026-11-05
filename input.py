@@ -43,7 +43,8 @@ VENTURI = {
                                #     shrink the inlet through the bell mouth)
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
-    "L_disk": 0.012,           # [m] axial length of the fan band; straight section = 2 L_disk,
+    "L_disk": 0.02,            # [m] axial length of the fan band; straight section = 2 L_disk
+                               #     holds rotor + gap + stator,
                                #     must be < L_max / 4
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter
     "P_max": None,             # [W] largest power, None = no limit
@@ -63,10 +64,16 @@ VENTOLA = {
     # Diameter, dp, flow rate and density come from the venturi of the same case.
     "temperatura_K": 293.15,                 # air temperature, consistent with VENTURI["fluid"]
     "mozzo_su_D": [0.15, 0.25],              # hub diameter / fan diameter, min and max
-    "recupero_swirl_statore": 0.75,          # stator after the rotor: share of the swirl energy
-                                             #   recovered as axial pressure, 0 = no stator,
-                                             #   0.7-0.85 for a simple stator
+    "statore": {                             # fixed vanes after the rotor (straighten the flow)
+        "presente": True,                    #   False = rotor only, the swirl leaves with the jet
+        "pale": None,                        #   vanes, None = first number >= 7 coprime with rotor
+        "solidita": 1.0,                     #   chord x vanes / circumference (0.6-1.5)
+        "profilo": "NACA4412",               #   section of the vanes
+        "gioco_assiale_m": 0.002,            #   axial gap rotor -> stator [m]
+    },
     "giri_min_max_rpm": [5000.0, 30000.0],   # shaft speed bounds [rpm]
+    "calettamento_min_max_deg": [0.0, 75.0], # blade pitch bounds [deg]; small hubs need a
+                                             #   steep root (flow angle up to 60-70 deg)
     "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0,                         # duration of the operating point (scales the energy)

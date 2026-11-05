@@ -4,16 +4,16 @@ Ingresso senza swirl, velocita assiale uniforme e costante attraverso il rotore.
 Lo swirl al piano pala e metà dello swirl in uscita. Nessuna induzione assiale
 da rotore libero. Ipotesi, bilanci e fonti: docs/VENTURI_INPUT.md.
 
-Statore (case["stator"]["swirl_recovery"] = r, 0 = assente): dopo il rotore
-raddrizza il flusso e trasforma la frazione r dell'energia dello swirl in
-pressione assiale; il resto (1 - r) e perso nello statore. Primo ordine: lo
-statore non e progettato, r e un rendimento di recupero dato.
+Statore (case["stator"]["enabled"]): schiera di pale fisse dopo il rotore, anello
+per anello (stator.py). Recupera lo swirl come pressione assiale, meno le sue
+perdite di profilo; senza statore lo swirl esce col getto.
 """
 import math
 from .config import number, operating_air
 from .geometry import interpolate
 from .polars import PolarDomainError
 from .settings import sizing_settings
+from . import stator as stator_model
 
 
 def annular_velocity(diameter, hub_diameter, flow):
@@ -43,6 +43,9 @@ def solve_pressure(case, design, point, polar, stations=32):
     count = design['blade_count']
     dr = (tip-hub)/stations
     thrust = torque = pressure_power = swirl_power = profile_loss = 0.
+    axial_power = stator_loss = stator_torque = 0.
+    st = stator_model.settings(case)
+    n_vanes = stator_model.vane_count(count, st['vanes']) if st['enabled'] else 0
     local = []
     for i in range(stations):
         r = hub+(i+.5)*dr
@@ -84,23 +87,33 @@ def solve_pressure(case, design, point, polar, stations=32):
         pressure_power += dp_total*dflow
         swirl_power += dp_swirl*dflow
         profile_loss += count*drag*w*dr
-        local.append(dict(r_m=r, axial_velocity_m_s=va, exit_swirl_m_s=2*swirl,
+        row = dict(r_m=r, axial_velocity_m_s=va, exit_swirl_m_s=2*swirl,
             alpha_deg=alpha, Re=re, Mach=max(mach, math.hypot(va,2*swirl)/sound),
             confidence=confidence, momentum_residual=residual,
             static_pressure_rise_Pa=dp_static, total_pressure_rise_Pa=dp_total,
-            dthrust_dr_N_m=dt, dtorque_dr_Nm_m=dq))
+            dthrust_dr_N_m=dt, dtorque_dr_Nm_m=dq)
+        dp_axial = dp_static
+        if st['enabled']:
+            vane = stator_model.ring(r, va, 2*swirl, rho, mu, sound, st, n_vanes)
+            dp_axial += vane['recovered_Pa']
+            stator_loss += vane['loss_Pa']*dflow
+            stator_torque += vane['removed']*dq*dr
+            row.update({f'stator_{k}': v for k, v in vane.items()})
+        axial_power += dp_axial*dflow
+        row['axial_total_pressure_rise_Pa'] = dp_axial
+        local.append(row)
     power = omega*torque
-    recovery = number(case.get('stator', {}).get('swirl_recovery', 0.0), 'recupero statore',
-                      strict=False)
-    if recovery > 1.0:
-        raise ValueError('Il recupero dello statore deve essere fra 0 e 1.')
     energy_error = abs(power-pressure_power-profile_loss)/power
     if energy_error > 1e-5:
         raise PolarDomainError('Bilancio energetico non convergente.')
     return dict(thrust_rotor_N=thrust, torque_Nm=torque, shaft_power_W=power,
         total_pressure_rise_Pa=pressure_power/flow,
-        axial_total_pressure_rise_Pa=(pressure_power-(1.0-recovery)*swirl_power)/flow,
-        stator_swirl_recovery=recovery,
+        axial_total_pressure_rise_Pa=axial_power/flow,
+        stator_enabled=bool(st['enabled']), stator_vanes=n_vanes,
+        stator_loss_power_W=stator_loss,
+        stator_swirl_recovery=((axial_power - (pressure_power - swirl_power))/swirl_power
+                               if swirl_power > 0 else 0.0),
+        stator_torque_Nm=stator_torque, net_torque_Nm=torque - stator_torque,
         static_pressure_rise_Pa=thrust/area,
         fluid_power_W=pressure_power, swirl_power_W=swirl_power,
         profile_loss_power_W=profile_loss, total_pressure_efficiency=pressure_power/power,
