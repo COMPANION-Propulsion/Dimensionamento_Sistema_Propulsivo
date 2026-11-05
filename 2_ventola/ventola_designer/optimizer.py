@@ -267,7 +267,11 @@ def main(argv=None):
         export_geometry(out,case,best['design'],blade_sections(best['design']),load_catalog())
         from .cad_export import export_cad
         print('CAD della ventola (STEP e STL, versioni A e speculare)...', flush=True)
-        report['cad'] = export_cad(out,case,best['design'])
+        try:
+            report['cad'] = export_cad(out,case,best['design'])
+        except Exception as exc:     # il dimensionamento resta valido anche senza CAD
+            report['cad'] = {'errore': str(exc)}
+            print(f'ERRORE CAD: {exc}', flush=True)
         # L'export geometrico ha metadati per il vecchio seme: sostituirli col report effettivo.
         (out/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
         svg = (out/'preview.svg').read_text(encoding='utf-8').replace('geometria iniziale','geometria SLSQP').replace('Non ottimizzata — spinta e potenza ancora da calcolare','Ottimizzazione locale BEMT — modello preliminare')

@@ -15,7 +15,8 @@ position of the fan. Every radius stays between R_min and R_int_max.
 
 Constraints, all written as g(x) >= 0 for SLSQP:
     geometric (no flow solution needed)
-        overall length and outer diameter of the tube with its bell mouth,
+        overall length (at most L_max, at least L_min) and outer diameter of the
+        tube with its bell mouth,
         no radius below the disk radius (the fan sits in the throat),
         diffuser slope, intake slope, smooth control polygon
     flow (each one is an adjoint)
@@ -53,6 +54,9 @@ SLOPE_DIFFUSER = math.tan(math.radians(7.0))   # steepest diffuser wall
 SLOPE_INTAKE = math.tan(math.radians(30.0))    # steepest intake wall
 BEND_MAX = 0.25        # largest second difference of the control polygon / R_int_max
 KS_RHO = 40.0          # sharpness of the smooth minimum
+# Names of the constraint margins in the log and in the history files
+MARGIN_NAMES = {"separation": "margine_separazione", "mach": "margine_mach",
+                "cavitation": "margine_cavitazione", "power": "margine_potenza"}
 THROAT_RAMP = 1.5      # cell-size ramp, fixed so the grid moves smoothly
 N_SLOPE_SAMPLES = 24   # slope checks along each spline
 STEP_RADIUS = 1e-6     # finite-difference step on a control point [m]
@@ -134,7 +138,10 @@ def initial_design(case: PropulsionCase, n_up: int = 5, n_down: int = 8):
                          f"disk radius {R_disk*1e3:.1f} mm. Raise D_ext_max or lower "
                          f"spessore_parete / D_disk_min_ratio.")
     L_section = 2.0 * case.L_disk
-    room = 0.9 * (case.L_max - bell_envelope(R_in, case.spessore_parete)[1]) - L_section
+    l_env = bell_envelope(R_in, case.spessore_parete)[1]
+    room = 0.9 * (case.L_max - l_env) - L_section
+    if case.L_min is not None:      # start inside [L_min, L_max]
+        room = max(room, 0.5 * (case.L_min + case.L_max) - l_env - L_section)
     if room <= 0.0:
         raise ValueError(f"L_max ({case.L_max}) leaves no room around the disk section.")
     L_up, L_down = START_SPLIT * room, (1.0 - START_SPLIT) * room
@@ -266,6 +273,7 @@ class DuctProblem:
         r_env, l_env = bell_envelope(g.R_inlet, c.spessore_parete)
         return np.concatenate((
             [(c.L_max - g.L_total - l_env) / c.L_max, (c.R_ext - r_env) / c.R_ext],
+            [] if c.L_min is None else [(g.L_total + l_env - c.L_min) / c.L_max],
             (np.r_[up, down] - R_disk) / c.R_int_max,
             1.0 - dr_down / SLOPE_DIFFUSER, 1.0 + dr_down / SLOPE_DIFFUSER,
             1.0 - dr_up / SLOPE_INTAKE, 1.0 + dr_up / SLOPE_INTAKE,
@@ -343,12 +351,18 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
         d = u * scale
         vals = problem.values(d)
         g = problem.geometry(d)
+        sol = problem.solve(d)
+        uz, ur = sol.system.velocities(sol.x)
+        # The constraints are margins (1 = far, 0 = at the limit); the log shows the
+        # physical Mach number next to them, the largest in the field.
         row = dict(iteration=len(history) + 1, time_s=round(time.time() - t0, 1),
                    L_total=g.L_total, D_inlet=2 * g.R_inlet, D_disk=2 * g.R_disk,
-                   D_exit=2 * g.R_exit,
-                   geometric_min=float(problem.geometric(d).min()), **vals)
+                   D_exit=2 * g.R_exit, thrust=vals["thrust"],
+                   mach_max=float(np.sqrt(uz ** 2 + ur ** 2).max() / case.speed_of_sound),
+                   geometric_min=float(problem.geometric(d).min()),
+                   **{MARGIN_NAMES.get(n, n): margin(n, vals) for n in flow_names})
         history.append(row)
-        row["converged"] = bool(problem.solve(d).converged)
+        row["converged"] = bool(sol.converged)
         feasible = (row["converged"] and row["geometric_min"] > -1e-3
                     and all(margin(n, vals) > -1e-3 for n in flow_names))
         if feasible and vals["thrust"] > best["T"]:
@@ -360,8 +374,9 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
             print(f"  it {row['iteration']:3d} [{row['time_s']:7.1f} s] "
                   f"T = {vals['thrust']:.4f} N, D_disk {row['D_disk']*1e3:.1f} mm, "
                   f"D_exit {row['D_exit']*1e3:.1f} mm, "
-                  f"L {row['L_total']*1e3:.0f} mm, "
-                  + ", ".join(f"{n} {margin(n, vals):+.3f}" for n in flow_names), flush=True)
+                  f"L {row['L_total']*1e3:.0f} mm, Mach {row['mach_max']:.4f}, "
+                  + ", ".join(f"{MARGIN_NAMES.get(n, n)} {margin(n, vals):+.3f}"
+                              for n in flow_names), flush=True)
         if log:
             with open(log, "w", encoding="utf-8") as fh:
                 json.dump(dict(design=d.tolist(), history=history), fh, indent=1)

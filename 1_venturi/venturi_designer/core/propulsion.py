@@ -69,6 +69,7 @@ class PropulsionCase:
     dp_disk: float = 100.0       # total-pressure rise of the disk [Pa], set by the dp loop
     T_target: Optional[float] = None # thrust per nozzle wanted [N]
     P_max: Optional[float] = None    # largest power allowed [W], None = free
+    L_min: Optional[float] = None    # smallest overall length of the tube [m], None = free
     turbulence_model: str = "baldwin_lomax"
     Nz: int = 64
     Nr: int = 26
@@ -101,6 +102,8 @@ class PropulsionCase:
                              f"{self.D_disk_min_ratio}.")
         if self.T_target is not None and self.T_target <= 0.0:
             raise ValueError(f"The thrust per nozzle must be positive, got {self.T_target}.")
+        if self.L_min is not None and not 0.0 < self.L_min < self.L_max:
+            raise ValueError(f"L_min ({self.L_min}) must be between 0 and L_max ({self.L_max}).")
         if 4.0 * self.L_disk >= self.L_max:
             raise ValueError(f"L_disk ({self.L_disk}) is too long for L_max ({self.L_max}).")
         f = FLUIDS[self.fluid]

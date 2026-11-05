@@ -12,9 +12,13 @@ spostamenti. Senza dati del Venturi resta nell'origine, sempre con asse X.
     pala.step / .stl                 una pala sola, con la radice dentro il mozzo
     CAD_info.json                    unita, versi di rotazione, gioco, controlli
 
-Le sezioni sono spline chiuse (dorso e ventre) unite da un loft liscio, non
-poligoni: lo STEP ha poche facce e si importa pulito. Gli STL vengono dalla
-tassellazione dello stesso solido e sono chiusi.
+Le sezioni sono spline chiuse (dorso e ventre), unite sezione per sezione da
+superfici rigate: ogni sezione e una curva liscia e lungo l'apertura ci sono
+SECTIONS tratti. Un loft unico "liscio" non va usato: quando la corda cambia
+molto fra due sezioni (corda minima alla radice, per esempio) la superficie che
+le interpola oscilla e la pala esce lunga decine di centimetri. Gli STL vengono
+dalla tassellazione dello stesso solido. Ogni pala e controllata: deve stare
+fra il mozzo e la punta e non essere piu larga di due corde.
 
 Gioco di punta: il diametro delle pale nel CAD e D - 2 gioco, perche le pale
 non tocchino il condotto. L'aerodinamica resta calcolata a diametro pieno;
@@ -40,7 +44,7 @@ ROOT_OVERLAP = 0.6         # raggio della sezione di radice dentro il mozzo / ra
 HUB_MARGIN_M = 0.001       # mozzo piu lungo della pala, per lato
 STL_TOL_MM = 0.005         # scarto massimo fra STL e superficie
 STL_ANGLE = 0.1            # [rad] scarto angolare della tassellazione
-SECTIONS = 21
+SECTIONS = 41              # sezioni lungo l'apertura della pala
 
 try:
     import cadquery as cq
@@ -76,11 +80,25 @@ def blade_solid(design, clearance=TIP_CLEARANCE_M):
     root = _root_section(sections[0]['points'], r_hub, ROOT_OVERLAP*r_hub)
     stack = [root] + [s['points'] for s in sections]
     wires = [_section_wire([tuple(1000*v for v in p) for p in pts]) for pts in stack]
-    return _closed_loft(wires)
+    solid = _closed_loft(wires)
+    _check_blade(solid, design, cad, r_hub)
+    return solid
+
+
+def _check_blade(solid, design, cad, r_hub):
+    """La pala deve stare dove le sezioni dicono: altrimenti il CAD e sbagliato."""
+    tip = 1000*cad['outer_diameter_m']/2
+    width = 2000*max(design['chord_m'])
+    pts = np.array([v.toTuple() for v in solid.Vertices()])
+    r = np.hypot(pts[:, 0], pts[:, 1])
+    bb = solid.BoundingBox()
+    if r.max() > tip + 0.5 or bb.zlen > width or min(bb.xlen, bb.ylen) > tip + width:
+        raise ValueError(f'Pala CAD fuori dalle dimensioni attese (raggio {r.max():.1f} mm '
+                         f'contro {tip:.1f}, estensione assiale {bb.zlen:.1f} mm).')
 
 
 def _closed_loft(wires):
-    """Loft liscio chiuso da due superfici di riempimento.
+    """Loft rigato chiuso da due superfici di riempimento.
 
     Le sezioni stanno su cilindri, non su piani: il loft "solido" di OCCT
     chiude le estremita con facce piane e il risultato non e valido. Qui la
@@ -90,7 +108,7 @@ def _closed_loft(wires):
     from OCP.BRepOffsetAPI import BRepOffsetAPI_ThruSections
     from OCP.ShapeFix import ShapeFix_Solid
     from OCP.TopoDS import TopoDS
-    loft = BRepOffsetAPI_ThruSections(False, False, 1e-6)
+    loft = BRepOffsetAPI_ThruSections(False, True, 1e-6)      # rigato, vedi docstring
     for w in wires:
         loft.AddWire(w.wrapped)
     loft.Build()

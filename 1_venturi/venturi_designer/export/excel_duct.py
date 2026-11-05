@@ -159,11 +159,13 @@ def export_duct_xlsx(F: Dict, results: Dict, design: np.ndarray, histories: Dict
     for name, hist in histories.items():
         for h in hist:
             rows.append([name] + [h.get(k) for k in ("iteration", "time_s", "thrust", "D_inlet",
-                                                        "D_disk", "D_exit", "L_total",
-                                                        "separation", "geometric_min")])
+                                                        "D_disk", "D_exit", "L_total", "mach_max")]
+                        + [h.get("margine_separazione", h.get("separation")),
+                           h.get("geometric_min"), h.get("violation")])
     _table(wo, ["fase", "iterazione", "tempo [s]", "spinta [N]", "D ingresso [m]",
-                "D ventola [m]", "D uscita [m]", "L [m]", "margine separazione [-]",
-                "vincolo geometrico min [-]"], rows)
+                "D ventola [m]", "D uscita [m]", "L [m]", "Mach massimo [-]",
+                "margine separazione [-]", "vincolo geometrico min [-]",
+                "violazione vincoli [-]"], rows)
 
     wd = wb.create_sheet("Iterazioni_dp")
     keys = ["ciclo", "tipo", "griglia", "dp_disk", "spinta", "errore_relativo", "esponente"]

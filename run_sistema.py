@@ -30,7 +30,7 @@ for folder in ("0_spinta", "1_venturi", "2_ventola"):
 
 STEPS = ("spinta", "venturi", "ventola")
 FAN_DEFAULTS = {
-    "temperatura_K": 293.15, "mozzo_min_max_m": [0.012, 0.024],
+    "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25], "recupero_swirl_statore": 0.0,
     "giri_min_max_rpm": [5000.0, 30000.0], "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0, "gioco_punta_m": 0.0005, "potenza_max_W": None, "jobs": None, "sizing": {},
@@ -60,6 +60,13 @@ def fan_input(input_file: str) -> str:
     venturi = os.path.join(root, caso.STEP_DIRS["venturi"], "00_sintesi", "risultati.json")
     if not os.path.isfile(venturi):
         raise ValueError(f"{caso.shown(venturi)} not found: run the venturi step first.")
+    with open(venturi, encoding="utf-8") as fh:
+        D = json.load(fh)["ventola"]["D_ventola_m"]
+    lo, hi = v["mozzo_su_D"]
+    if not 0.0 < lo < hi < 1.0:
+        raise ValueError(f"VENTOLA['mozzo_su_D'] = {v['mozzo_su_D']}: need 0 < min < max < 1.")
+    if not 0.0 <= v["recupero_swirl_statore"] <= 1.0:
+        raise ValueError("VENTOLA['recupero_swirl_statore'] must be between 0 and 1.")
     data = {
         "description": "Written by run_sistema.py from VENTOLA of input.py.",
         "design_mode": "pressure_flow",
@@ -67,7 +74,7 @@ def fan_input(input_file: str) -> str:
         "air": {"temperature_K": v["temperatura_K"],
                 "static_pressure_Pa": inputs["VENTURI"].get("p_amb", 101325.0),
                 "relative_humidity": None},
-        "rotor": {"hub_diameter_bounds_m": list(v["mozzo_min_max_m"]),
+        "rotor": {"hub_diameter_bounds_m": [lo * D, hi * D],
                   "blade_count_candidates": list(v["pale_candidate"]),
                   "airfoil_candidates": list(v["profili_candidati"]),
                   "profile_constant_along_span": True,
@@ -76,6 +83,7 @@ def fan_input(input_file: str) -> str:
                               "duration_s": v["durata_s"]}],
         "sizing": {"loss_model": "none", **v["sizing"]},
         "cad": {"tip_clearance_m": v["gioco_punta_m"]},
+        "stator": {"swirl_recovery": v["recupero_swirl_statore"]},
     }
     path = os.path.join(root, "input_ventola.json")
     with open(path, "w", encoding="utf-8") as fh:
@@ -179,7 +187,9 @@ def write_summary(input_file: str) -> None:
                 ("condotto: banda del disco", pl["disco_Pa"]),
                 ("condotto: disco → uscita", pl["valle_Pa"]),
                 ("ventola: attrito dei profili", c["profile_loss_power_W"] / q),
-                ("ventola: swirl in uscita (senza statore)", c["swirl_power_W"] / q)]
+                ("ventola: swirl in uscita" + (" (dopo lo statore)" if c.get("stator_swirl_recovery")
+                                                  else " (senza statore)"),
+                 c["swirl_power_W"] * (1.0 - c.get("stator_swirl_recovery", 0.0)) / q)]
         total = sum(x for _, x in rows)
         lines += ["## Perdite di pressione totale", "",
                   "| dove | perdita [Pa] | potenza [W] |", "|---|---|---|",

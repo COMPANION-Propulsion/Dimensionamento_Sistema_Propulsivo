@@ -68,7 +68,11 @@ dell'ugello (tubo + pale) e quella sulle sole pale, da 0 a `VENTOLA["potenza_max
 ## Modello e limiti
 
 - Requisito sul Δp **assiale** (swirl escluso), lo stesso del disco del Venturi:
-  senza statore lo swirl esce col getto e non dà spinta.
+  senza statore lo swirl esce col getto e non dà spinta. Con
+  `VENTOLA["recupero_swirl_statore"]` = r > 0 uno statore a valle recupera la
+  frazione r dell'energia dello swirl come pressione assiale (primo ordine: lo
+  statore non è progettato né disegnato nel CAD).
+- Mozzo fra `VENTOLA["mozzo_su_D"]` volte il diametro della ventola.
 - Velocità uniforme sull'anello libero dal mozzo, ingresso senza swirl, densità
   costante. Perdite al mozzo, alle pareti e di gioco di punta non modellate.
 - Polari numeriche NeuralFoil, non validate sperimentalmente. Ricerca SLSQP

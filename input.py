@@ -10,7 +10,7 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": "TEST_1",          # None = name built from the inputs + hash, or a string of your choice
+    "nome": "TEST_2",          # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
@@ -36,7 +36,9 @@ VENTURI = {
     # --- size of the tube ---------------------------------------------------
     "D_ext_max": 0.05,         # [m] largest OUTER diameter of the tube
     "L_max": 0.20,             # [m] largest overall length, bell mouth included
-    "gap_parete": 0.005,       # [m] from the outer edge to the inner duct
+    "L_min": 0.08,             # [m] smallest overall length (motor, supports), None = free;
+                               #     the optimiser stays close to it: shorter = less friction
+    "gap_parete": 0.003,       # [m] from the outer edge to the inner duct (wall + margin)
     "spessore_parete": 0.002,  # [m] wall of the CAD tube, at most gap_parete (thick walls
                                #     shrink the inlet through the bell mouth)
 
@@ -52,7 +54,7 @@ VENTURI = {
     "n_down": 8,               # free control points of the diffuser (8-10)
     "grid": "medium",          # "coarse", "medium" or "fine"
     "jobs": 3,                 # grids solved at the same time in the final check (3 grids)
-    "max_iter": 60,            # optimiser iterations per grid
+    "max_iter": 40,            # optimiser iterations per grid
     "tol_dp": 0.01,            # [-] the dp loop stops when dp changes less than this
     "max_cicli_dp": 4,         # largest number of shape optimisations in the dp loop (2 usually)
 }
@@ -60,7 +62,10 @@ VENTURI = {
 VENTOLA = {
     # Diameter, dp, flow rate and density come from the venturi of the same case.
     "temperatura_K": 293.15,                 # air temperature, consistent with VENTURI["fluid"]
-    "mozzo_min_max_m": [0.012, 0.024],       # hub diameter bounds [m]
+    "mozzo_su_D": [0.15, 0.25],              # hub diameter / fan diameter, min and max
+    "recupero_swirl_statore": 0.75,          # stator after the rotor: share of the swirl energy
+                                             #   recovered as axial pressure, 0 = no stator,
+                                             #   0.7-0.85 for a simple stator
     "giri_min_max_rpm": [5000.0, 30000.0],   # shaft speed bounds [rpm]
     "pale_candidate": [2, 3, 4, 5, 6, 7, 8],
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],

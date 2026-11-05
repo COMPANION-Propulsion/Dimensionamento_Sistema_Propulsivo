@@ -100,3 +100,13 @@ def test_fan_must_sit_in_the_throat():
     big = d.copy()
     big[-3] = d[:-3].min() + 0.002
     assert p.geometric(big).min() < 0.0
+
+
+def test_minimum_length_is_a_constraint():
+    case = make_case(D_ext_max=0.05, L_max=0.20, L_disk=0.012, L_min=0.15)
+    layout, d = initial_design(case)
+    p = DuctProblem(case, layout)
+    assert p.geometric(d).min() >= 0.0
+    short = d.copy()
+    short[-2:] *= 0.3
+    assert p.geometric(short).min() < 0.0
