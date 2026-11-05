@@ -40,19 +40,20 @@ VENTURI = {
     "spessore_parete": 0.005,  # [m] wall of the CAD tube, at most gap_parete
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
-    "L_disk": 0.05,            # [m] axial length of the fan band
+    "L_disk": 0.012,           # [m] axial length of the fan band; straight section = 2 L_disk,
+                               #     must be < L_max / 4
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter
     "P_max": None,             # [W] largest power, None = no limit
 
     # --- optimisation -------------------------------------------------------
     "turbulence_model": "baldwin_lomax",
-    "n_up": 100,                 # free control points of the intake
-    "n_down": 100,               # free control points of the diffuser
+    "n_up": 5,                 # free control points of the intake (5-8: more only adds time)
+    "n_down": 8,               # free control points of the diffuser (8-10)
     "grid": "medium",          # "coarse", "medium" or "fine"
-    "jobs": 10,                 # grids solved at the same time in the final check
-    "max_iter": 500,            # optimiser iterations per grid
+    "jobs": 3,                 # grids solved at the same time in the final check (3 grids)
+    "max_iter": 60,            # optimiser iterations per grid
     "tol_dp": 0.01,            # [-] the dp loop stops when dp changes less than this
-    "max_cicli_dp": 150,         # largest number of shape optimisations in the dp loop
+    "max_cicli_dp": 4,         # largest number of shape optimisations in the dp loop (2 usually)
 }
 
 VENTOLA = {
