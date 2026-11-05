@@ -310,6 +310,15 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
     def margin(name: str, vals: Dict[str, float]) -> float:
         return 1.0 - vals[name] / case.P_max if name == "power" else vals[name]
 
+    def violation(d: np.ndarray, vals: Dict[str, float]) -> float:
+        """How far a shape is from feasible: sum of the violated margins (0 = feasible)."""
+        return float(-min(problem.geometric(d).min(), 0.0)
+                     - sum(min(margin(n, vals), 0.0) for n in flow_names))
+
+    # When no iterate is feasible, the least infeasible one is kept, not the last:
+    # SLSQP can wander away from the constraints in its final iterations.
+    least = {"d": d0.copy(), "v": violation(d0, problem.values(d0)), "T": T0}
+
     def margin_grad(name: str, g: np.ndarray) -> np.ndarray:
         return -g / case.P_max if name == "power" else g
 
@@ -344,6 +353,9 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
                     and all(margin(n, vals) > -1e-3 for n in flow_names))
         if feasible and vals["thrust"] > best["T"]:
             best.update(d=d.copy(), T=vals["thrust"])
+        row["violation"] = violation(d, vals)
+        if row["converged"] and (row["violation"], -vals["thrust"]) < (least["v"], -least["T"]):
+            least.update(d=d.copy(), v=row["violation"], T=vals["thrust"])
         if verbose:
             print(f"  it {row['iteration']:3d} [{row['time_s']:7.1f} s] "
                   f"T = {vals['thrust']:.4f} N, D_disk {row['D_disk']*1e3:.1f} mm, "
@@ -362,9 +374,16 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
     res = minimize(objective, d0 / scale, jac=objective_grad, method="SLSQP",
                    bounds=list(zip(lo, hi)), constraints=cons, callback=record,
                    options=dict(maxiter=max_iter, ftol=ftol))
-    d_best = best["d"] if best["T"] > -math.inf else res.x * scale
+    feasible = best["T"] > -math.inf
+    d_best = best["d"] if feasible else least["d"]
+    message = str(res.message)
+    if not feasible:
+        message += f" | no feasible shape: least infeasible kept (violation {least['v']:.3g})"
+        if verbose:
+            print(f"  WARNING: no feasible shape, kept the least infeasible one "
+                  f"(violation {least['v']:.3g})", flush=True)
     return OptResult(design=d_best, thrust=problem.values(d_best)["thrust"], thrust_start=T0,
-                     history=history, success=bool(res.success), message=str(res.message))
+                     history=history, success=bool(res.success) and feasible, message=message)
 
 
 def report(problem: DuctProblem, d: np.ndarray) -> Dict[str, float]:

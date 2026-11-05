@@ -37,7 +37,8 @@ VENTURI = {
     "D_ext_max": 0.05,         # [m] largest OUTER diameter of the tube
     "L_max": 0.20,             # [m] largest overall length, bell mouth included
     "gap_parete": 0.005,       # [m] from the outer edge to the inner duct
-    "spessore_parete": 0.005,  # [m] wall of the CAD tube, at most gap_parete
+    "spessore_parete": 0.002,  # [m] wall of the CAD tube, at most gap_parete (thick walls
+                               #     shrink the inlet through the bell mouth)
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
     "L_disk": 0.012,           # [m] axial length of the fan band; straight section = 2 L_disk,
