@@ -120,7 +120,8 @@ def export_paraview_results(directory, case, runs, best=None):
             for point_index, result in enumerate(cases):
                 local = result["local"]
                 filename = f'run_{run_index:03d}_{_safe_name(run["profile"])}_{run["blades"]}pale_point_{point_index:02d}.vtp'
-                fields = {key: [row[key] for row in local] for key in local[0] if key != "r_m"}
+                fields = {key: [float("nan") if row[key] is None else row[key] for row in local]
+                          for key in local[0] if key != "r_m"}
                 _write_polydata(out / filename, [(row["r_m"], 0.0, 0.0) for row in local],
                                 lines=[tuple(range(len(local)))], point_data=fields,
                                 cell_data={"accepted": [1.0], "blade_count": [float(run["blades"])],

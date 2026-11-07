@@ -53,6 +53,40 @@ class PolarGrid:
         if self.profile != profile or coordinate_hash(naca4(profile)) != self.data["coordinates_sha256"]:
             raise PolarDomainError("Profilo o coordinate diversi da quelli della polare.")
 
+    def positive_stall_angle(self, reynolds, mach, working_alpha):
+        """Primo picco sul ramo positivo. Due cali consecutivi confermano il picco.
+
+        Richiede copertura continua dalla minore fra incidenza di lavoro e zero
+        fino al picco. Un primo massimo ambiguo rende il limite indeterminato.
+        """
+        angles = self.axes[2]
+        start = bisect.bisect_right(angles, min(0., working_alpha)) - 1
+        if start < 0 or angles[-1] <= 0:
+            return None
+        previous = None
+        peak = None
+        declines = 0
+        for angle in angles[start:]:
+            try:
+                cl, _, _ = self.coefficients(angle, reynolds, mach)
+            except PolarDomainError:
+                return None
+            if previous is not None:
+                if cl > previous:
+                    if declines:
+                        return None
+                    peak = angle
+                elif cl < previous and angle > 0:
+                    if peak is None or peak < 0:
+                        return None
+                    declines += 1
+                    if declines == 2:
+                        return peak
+                elif declines:
+                    return None
+            previous = cl
+        return None
+
     def coefficients(self, alpha, reynolds, mach):
         if not math.isfinite(reynolds) or reynolds <= 0:
             raise PolarDomainError("Reynolds non positivo o non finito.")

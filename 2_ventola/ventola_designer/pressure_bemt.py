@@ -92,6 +92,10 @@ def solve_pressure(case, design, point, polar, stations=32):
             confidence=confidence, momentum_residual=residual,
             static_pressure_rise_Pa=dp_static, total_pressure_rise_Pa=dp_total,
             dthrust_dr_N_m=dt, dtorque_dr_Nm_m=dq)
+        find_peak = getattr(polar, 'positive_stall_angle', None)
+        peak = find_peak(re, mach, alpha) if find_peak else None
+        row.update(rotor_stall_angle_deg=peak, rotor_relative_Mach=mach,
+                   rotor_stall_margin_deg=None if peak is None else peak - alpha)
         dp_axial = dp_static
         if st['enabled']:
             vane = stator_model.ring(r, va, 2*swirl, rho, mu, sound, st, n_vanes)
@@ -106,7 +110,14 @@ def solve_pressure(case, design, point, polar, stations=32):
     energy_error = abs(power-pressure_power-profile_loss)/power
     if energy_error > 1e-5:
         raise PolarDomainError('Bilancio energetico non convergente.')
-    return dict(thrust_rotor_N=thrust, torque_Nm=torque, shaft_power_W=power,
+    unknown = sum(row['rotor_stall_margin_deg'] is None for row in local)
+    critical = None
+    if not unknown:
+        worst = min(local, key=lambda row: row['rotor_stall_margin_deg'])
+        critical = {key: worst[key] for key in ('r_m', 'alpha_deg', 'Re', 'rotor_relative_Mach',
+                                                 'rotor_stall_angle_deg', 'rotor_stall_margin_deg')}
+    return dict(rotor_stall_critical=critical, rotor_stall_unknown_sections=unknown,
+        thrust_rotor_N=thrust, torque_Nm=torque, shaft_power_W=power,
         total_pressure_rise_Pa=pressure_power/flow,
         axial_total_pressure_rise_Pa=axial_power/flow,
         stator_enabled=bool(st['enabled']), stator_vanes=n_vanes,

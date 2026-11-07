@@ -106,7 +106,11 @@ def power_curve(fan_report, venturi_result, p_max=None, n_points=N_POINTS):
             rows.append({k: (prev[k] + w*(row[k] - prev[k]) if isinstance(row[k], float) else 'interpolato')
                          for k in row})
             break
+        critical = r.get('rotor_stall_critical')
+        row['rotor_stall_margin_deg'] = critical['rotor_stall_margin_deg'] if critical else None
         rows.append(row)
+    for row in rows:
+        row.setdefault('rotor_stall_margin_deg', None)
     return dict(
         righe=rows, saltati=skipped, potenza_max_W=p_max,
         progetto=dict(rpm=n_star, potenza_albero_W=p_star, spinta_ugello_N=duct['T'],
@@ -119,7 +123,8 @@ def power_curve(fan_report, venturi_result, p_max=None, n_points=N_POINTS):
                      mozzo_m=design['hub_diameter_m'], diametro_m=design['outer_diameter_m']),
         nota=('Geometria fissa, giri variabili. La spinta dell ugello comprende il condotto; '
               'la spinta delle pale e la sola forza sul rotore. Regimi senza punto di lavoro '
-              'nel dominio delle polari sono in "saltati".'))
+              'nel dominio delle polari sono in "saltati". Margine rotorico stimato sui soli punti BEMT. '
+              'Con statore attivo il modello ne ricalcola il calettamento a ciascun regime.'))
 
 
 def _plot(curve, path):
@@ -166,14 +171,15 @@ def _xlsx(curve, path):
     head = [('rpm', 'giri [rpm]'), ('potenza_albero_W', 'potenza albero [W]'),
             ('spinta_ugello_N', 'spinta ugello [N]'), ('spinta_pale_N', 'spinta pale [N]'),
             ('dp_assiale_Pa', 'Δp assiale [Pa]'), ('portata_m3_s', 'portata [m3/s]'),
-            ('coppia_Nm', 'coppia [N m]'), ('rendimento', 'rendimento [-]'), ('stato', 'stato')]
+            ('coppia_Nm', 'coppia [N m]'), ('rendimento', 'rendimento [-]'), ('stato', 'stato'),
+            ('rotor_stall_margin_deg', 'margine rotore [°]')]
     for c, (_, h) in enumerate(head, 1):
         cell = ws.cell(row=1, column=c, value=h)
         cell.fill, cell.font = PatternFill('solid', fgColor='1F4E78'), Font(bold=True, color='FFFFFF')
         ws.column_dimensions[cell.column_letter].width = 18
     for r, row in enumerate(curve['righe'], 2):
         for c, (k, _) in enumerate(head, 1):
-            v = row[k]
+            v = row.get(k)
             ws.cell(row=r, column=c, value=None if isinstance(v, float) and math.isnan(v) else v)
     ws.freeze_panes = 'A2'
     n = len(curve['righe']) + 1

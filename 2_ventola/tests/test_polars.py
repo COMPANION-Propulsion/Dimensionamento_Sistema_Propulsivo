@@ -25,6 +25,20 @@ class PolarTests(unittest.TestCase):
                 for a in (-10,10):
                     self.assertAlmostEqual(grid.coefficients(a,re,m)[0],math.log(re)+m+a)
 
+    def test_positive_stall_requires_observed_peak_and_continuous_coverage(self):
+        grid = self.grid()
+        grid.axes[2] = [0., 1., 2., 3., 4., 5.]
+        for lift, expected in (([0, 1, 2, 2, 1, 0], 2.),
+                               ([0, 1, 2, 3, 4, 5], None),
+                               ([0, 1, 2, 1, 3, 4], None)):
+            grid.data['cl'][0][0] = lift
+            grid.data['cd'][0][0] = [.02] * 6
+            grid.data['confidence'][0][0] = [.9] * 6
+            self.assertEqual(grid.positive_stall_angle(10000, 0., 1.), expected)
+        grid.data['cl'][0][0] = [0, 1, 2, 2, 1, 0]
+        grid.data['confidence'][0][0][1] = .1
+        self.assertIsNone(grid.positive_stall_angle(10000, 0., 1.))
+
     def test_reject_each_out_of_domain(self):
         for args in [(0,9999,.1),(0,100001,.1),(-11,20000,.1),(11,20000,.1),
                      (0,20000,-.01),(0,20000,.21),(0,float("nan"),.1)]:

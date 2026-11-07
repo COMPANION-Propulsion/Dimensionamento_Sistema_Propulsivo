@@ -5,7 +5,7 @@ import math
 DEFAULTS = {
     'pressure_numerical_margin':.002, 'max_pressure_grid_change':.01,
     'geometry_stations':65, 'minimum_section_thickness_m':0., 'minimum_circumferential_gap_m':0.,
-    'loss_model':'none',
+    'loss_model':'none', 'minimum_rotor_stall_margin_deg': None,
     'chord_over_D_bounds':[.04,.22], 'pitch_deg_bounds':[0.,45.],
     'max_solidity':.8, 'max_Mach':.3, 'thrust_numerical_margin':.002,
     'stations_optimization':32, 'stations_verification':64, 'stations_final':128,
@@ -24,6 +24,12 @@ def sizing_settings(case):
         raise ValueError(f'Impostazioni sizing sconosciute: {sorted(unknown)}')
     cfg = deepcopy(DEFAULTS)
     cfg.update(deepcopy(supplied))
+    margin = cfg['minimum_rotor_stall_margin_deg']
+    if margin is not None:
+        if type(margin) not in (int, float) or not math.isfinite(margin) or margin < 0:
+            raise ValueError('minimum_rotor_stall_margin_deg: richiesti gradi finiti >= 0 o null.')
+        if case.get('design_mode') != 'pressure_flow':
+            raise ValueError('Il margine di stallo rotorico richiede pressure_flow.')
     if cfg['loss_model'] not in ('none','prandtl_free_rotor'):
         raise ValueError('loss_model deve essere none oppure prandtl_free_rotor.')
     for name in ('chord_over_D_bounds','pitch_deg_bounds'):

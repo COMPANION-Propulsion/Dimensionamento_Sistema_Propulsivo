@@ -85,5 +85,5 @@ VENTOLA = {
     "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
     "potenza_max_W": None,                   # end of the power curve, None = 2 x design power
     "jobs": None,                            # pairs profile/blades in parallel, None = all cores
-    "sizing": {},                            # overrides of the fan sizing settings (see 2_ventola)
+    "sizing": {"minimum_rotor_stall_margin_deg": None},  # None = diagnostica, oppure gradi richiesti
 }

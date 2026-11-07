@@ -60,6 +60,19 @@ class PressureFlowTests(unittest.TestCase):
             expected = 2*math.pi*row['r_m']**2*result['density_kg_m3']*result['axial_blade_velocity_m_s']*row['exit_swirl_m_s']
             self.assertAlmostEqual(row['dtorque_dr_Nm_m'], expected, places=5)
 
+    def test_margin_constraint_uses_worst_section_and_rejects_unknown(self):
+        polar = ConstantPolar()
+        polar.positive_stall_angle = lambda re, mach, alpha: 16.
+        self.case['sizing']['minimum_rotor_stall_margin_deg'] = 3.
+        _, constraints, results = evaluate(self.case, self.design, polar)
+        result = results[0]
+        margin = 16. - max(r['alpha_deg'] for r in result['local'])
+        self.assertAlmostEqual(result['rotor_stall_critical']['rotor_stall_margin_deg'], margin)
+        index = 2 + self.case['sizing']['solidity_stations']
+        self.assertAlmostEqual(constraints[index], margin - 3.)
+        with self.assertRaisesRegex(ValueError, 'indeterminato'):
+            evaluate(self.case, self.design, ConstantPolar())
+
     def test_zero_drag_limit_has_unit_total_efficiency(self):
         result = solve_pressure(self.case, self.design, self.point, ConstantPolar(drag=0.))
         self.assertAlmostEqual(result['total_pressure_efficiency'], 1., places=6)

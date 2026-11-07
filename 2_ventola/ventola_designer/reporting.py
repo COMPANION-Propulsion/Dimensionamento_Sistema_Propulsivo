@@ -92,6 +92,18 @@ def render_pressure_report(report):
             keys = ('volume_flow_m3_s','axial_blade_velocity_m_s','axial_total_pressure_rise_Pa',
                     'total_pressure_rise_Pa','static_pressure_rise_Pa','shaft_power_W','torque_Nm','rpm')
             rows.append('| '+cell(point['name'])+' | '+' | '.join(f"{result.get(k, float('nan')):.6g}" for k in keys)+' |')
+        required = case.get('sizing', {}).get('minimum_rotor_stall_margin_deg')
+        rows += ['', 'Margine rotorico stimato dalle polari. ' +
+                 ('Sola diagnostica.' if required is None else f'Minimo richiesto {required:g} gradi.')]
+        for result in best['cases']:
+            critical = result.get('rotor_stall_critical')
+            if critical:
+                rows.append(f"- {result['rpm']:.0f} rpm: margine {critical['rotor_stall_margin_deg']:.2f}°, "
+                            f"r = {1000*critical['r_m']:.2f} mm, incidenza {critical['alpha_deg']:.2f}°, "
+                            f"picco {critical['rotor_stall_angle_deg']:.2f}°, Re = {critical['Re']:.0f}.")
+            elif 'rotor_stall_unknown_sections' in result:
+                rows.append(f"- {result['rpm']:.0f} rpm: limite indeterminato per "
+                            f"{result['rotor_stall_unknown_sections']} sezioni.")
         rows += ['', '| Posizione normalizzata | Corda [m] | Calettamento [gradi] |', '|---:|---:|---:|']
         for s,c,p in zip(d['span_nodes'],d['chord_m'],d['pitch_deg']):
             rows.append(f'| {s:.6g} | {c:.6g} | {p:.6g} |')

@@ -72,6 +72,13 @@ def evaluate(case, design, polar, stations=None):
     for s in np.linspace(0,1,cfg['solidity_stations']):
         chord = interpolate(design['span_nodes'],design['chord_m'],float(s))
         constraints.append(cfg['max_solidity']-design['blade_count']*chord/(2*math.pi*(hub+s*(tip-hub))))
+    required = cfg['minimum_rotor_stall_margin_deg']
+    if required is not None:
+        for result in results:
+            critical = result['rotor_stall_critical']
+            if critical is None:
+                raise ModelDomainError('Margine di stallo del rotore indeterminato.')
+            constraints.append(critical['rotor_stall_margin_deg'] - required)
     constraints.extend(geometric_constraints)
     return energy, np.asarray(constraints), results
 
@@ -127,6 +134,8 @@ def _optimize_start(case, profile, blades, polar, seed_energy, seed, maxiter):
     cache = {}
     rejected = 0
     ncons = 2*len(case['operating_points'])+cfg['solidity_stations']+2*cfg['geometry_stations']
+    if cfg['minimum_rotor_stall_margin_deg'] is not None:
+        ncons += len(case['operating_points'])
     def sample(x):
         nonlocal rejected
         key = tuple(x)
