@@ -25,10 +25,27 @@ The flow rate is not imposed: it is what makes these three agree.
 
 Thrust, from a control volume going from far upstream to the exit plane:
 
-    T = integral(rho * uz^2 dA) - rho * Q * V0
+    T = integral(rho * uz^2 + p - p_amb) dA - rho * Q * V0
+
+The exit boundary condition fixes p = p_amb on the exit face, so the pressure
+term is zero there by construction; it is written out (p_out) so that the
+formula is the complete one. The independent check is the sum of the axial
+forces on walls and disk (momentum_balance in adjoint.py); the two must agree
+within 1 %.
 
 This is the net internal thrust. The external flow over the nacelle is not
 solved, so its drag is not included.
+
+LIMITS of the actuator disk, to keep in mind when comparing with a test bench:
+the disk has no hub body, no tip clearance and no swirl. The real fan gives
+less: the tip gap leaks, the hub blocks part of the section, the swirl that no
+stator removes carries energy out with the jet. Two first-order parameters
+(both 0 by default) bring some of it in:
+
+    mozzo_su_D_disco   no dp inside this fraction of the disk radius (hub); the
+                       air there gets no energy (the hub body itself is not in
+                       the flow, so this is pessimistic: see fan_coupled.py)
+    perdita_swirl      fraction of dp lost as swirl, the disk gives (1 - it) dp
 """
 
 from __future__ import annotations
@@ -70,6 +87,9 @@ class PropulsionCase:
     T_target: Optional[float] = None # thrust per nozzle wanted [N]
     P_max: Optional[float] = None    # largest power allowed [W], None = free
     L_min: Optional[float] = None    # smallest overall length of the tube [m], None = free
+    semiangolo_max_deg: float = 4.0  # steepest diffuser wall (half angle) [deg]
+    mozzo_su_D_disco: float = 0.0    # hub / disk diameter: no dp inside it (see docstring)
+    perdita_swirl: float = 0.0       # fraction of dp lost as swirl (see docstring)
     turbulence_model: str = "baldwin_lomax"
     Nz: int = 64
     Nr: int = 26
@@ -164,6 +184,10 @@ def disk_force(mesh: FVMesh, z_a: float, z_b: float, dp: float, rho: float) -> n
 
 
 def thrust_from_fluxes(F_out: np.ndarray, A_out: np.ndarray, Q: float, V0: float,
-                       rho: float) -> float:
-    """Net thrust [N] from the exit fluxes."""
-    return float(rho * np.sum(F_out ** 2 / A_out) - rho * Q * V0)
+                       rho: float, p_out: float = 0.0) -> float:
+    """Net thrust [N] from the exit face: momentum flux + (p - p_amb) A - rho Q V0.
+
+    p_out is the gauge pressure on the exit face (kinematic p / rho would be wrong:
+    this is in Pa); the exit condition makes it 0.
+    """
+    return float(rho * np.sum(F_out ** 2 / A_out) + p_out * np.sum(A_out) - rho * Q * V0)

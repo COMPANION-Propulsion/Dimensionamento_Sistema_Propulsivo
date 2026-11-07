@@ -115,6 +115,8 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
         spinta=dict(
             richiesta_N=case.T_target, sorgente=info.get("source", ""),
             calcolata_N=summary["thrust"], da_bilancio_forze_N=summary["thrust_from_forces"],
+            scarto_bilancio_forze_pct=summary.get("thrust_check_pct", float("nan")),
+            beta_spinta_su_mdot_v=summary.get("beta", float("nan")),
             errore_griglia_N=est.get("error", float("nan")),
             errore_griglia_pct=est.get("error_pct", float("nan")),
             estrapolata_N=est.get("extrapolated", float("nan")),
@@ -141,9 +143,31 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
             griglie_studio=", ".join(est.get("grids", [])),
             esponente_T_dp=info.get("exponent", float("nan")),
             ciclo_dp_convergito=bool(info.get("converged", False)),
+            curva_ventola=("fittizia" if (info.get("curve") or {}).get("fittizia")
+                           else ("da input" if info.get("curve") else "nessuna (dp fisso per la spinta)")),
             STL_chiusi=all(v for k, v in ck.items() if k.endswith("_chiuso")),
             triangoli_tubo=ck["tubo_triangoli"], triangoli_fluido=ck["fluido_triangoli"]),
     )
+
+
+def scan_lines(scan):
+    if not scan:
+        return []
+    b = scan["migliore"]
+    ok = [c for c in scan["casi"] if c.get("stato") == "ok"]
+    lines = ["## Scansione della forma", "",
+             f"Criterio: {scan['criterio']}. D ventola fisso {scan['D_ventola_mm']:.1f} mm, "
+             f"{len(ok)} casi risolti su {len(scan['casi'])} (gli altri: semiangolo, ingombro o non "
+             f"convergenti, vedi `05_convergenza/scansione.json` e `01_grafici/scansione.svg`).", "",
+             "| D uscita [mm] | L diffusore [mm] | semiangolo [°] | spinta [N] | dp [Pa] | τ_w min diffusore [Pa] |",
+             "|---|---|---|---|---|---|"]
+    for c in ok:
+        star = " ★" if c is b or (c["D_uscita_mm"] == b["D_uscita_mm"] and c["L_diffusore_mm"] == b["L_diffusore_mm"]) else ""
+        lines.append(f"| {c['D_uscita_mm']:.1f}{star} | {c['L_diffusore_mm']:.1f} | {c['semiangolo_deg']:.2f} | "
+                     f"{c['spinta_N']:.5f} | {c['dp_Pa']:.2f} | {c['tau_w_min_diffusore_Pa']:+.4f} |")
+    if scan.get("curva_ventola") and scan["curva_ventola"].get("fittizia"):
+        lines += ["", "**La curva della ventola usata è un ESEMPIO FITTIZIO: i numeri non valgono per il progetto.**"]
+    return lines + [""]
 
 
 def write_report(results: Dict, path: str) -> str:
@@ -175,7 +199,10 @@ def write_report(results: Dict, path: str) -> str:
         "## Spinta", "",
         f"- richiesta per ugello: {s['richiesta_N']:.5g} N (da `{s['sorgente']}`)",
         f"- calcolata sulla griglia fine: {s['calcolata_N']:.5g} N, "
-        f"dal bilancio delle forze {s['da_bilancio_forze_N']:.5g} N",
+        f"dal bilancio delle forze {s['da_bilancio_forze_N']:.5g} N "
+        f"(scarto {s['scarto_bilancio_forze_pct']:+.2f} %, deve stare entro ±1 %)",
+        f"- β = spinta / (ṁ v_media,uscita) = {s['beta_spinta_su_mdot_v']:.3f} "
+        f"(1 = getto uniforme; > 1 profilo non uniforme)",
         f"- errore di griglia (GCI): ±{s['errore_griglia_N']:.4g} N "
         f"({s['errore_griglia_pct']:.2f} %), estrapolata {s['estrapolata_N']:.5g} N",
         f"- spinta / potenza: {s['spinta_su_potenza_N_W']:.4f} N/W", "",
@@ -201,6 +228,7 @@ def write_report(results: Dict, path: str) -> str:
         "",
         f"Potenza persa {pl['potenza_persa_W']:.4f} W su {v['potenza_fluido_W']:.4f} W date "
         f"all'aria. La bocca d'imbocco del CAD è fuori dal dominio di calcolo e non è inclusa.", "",
+        *(scan_lines(results.get("scansione"))),
         "## Numerica", "",
         f"- griglia del risultato {n['griglia']}, studio di griglia su {n['griglie_studio']}, "
         f"modello `{n['turbolenza']}`",
@@ -281,6 +309,8 @@ def export_duct_results(problem, design, summary: Dict, dirs: Dict[str, str],
     files += [export_paraview_2d(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"], extra),
               *export_pointcloud(mesh, c["uz"], c["ur"], p_abs, dirs["cfd"], ply=False)]
 
+    if info.get("scan"):
+        results["scansione"] = info["scan"]
     results = _json_safe(results)
     path = os.path.join(dirs["sintesi"], "risultati.json")
     with open(path, "w", encoding="utf-8") as fh:

@@ -99,7 +99,7 @@ class FVResult:
 # ---------------------------------------------------------------------------
 # Inlet profile
 # ---------------------------------------------------------------------------
-def inlet_profile(mesh: FVMesh, Re_D: float, Q_target: float) -> np.ndarray:
+def inlet_profile(mesh: FVMesh, Re_D: float, Q_target: float, flat: bool = False) -> np.ndarray:
     """Axial inlet velocity profile, normalised to an exact flow rate.
 
     Below Re = 2300 the flow is laminar and the developed profile is
@@ -113,7 +113,14 @@ def inlet_profile(mesh: FVMesh, Re_D: float, Q_target: float) -> np.ndarray:
     The profile is finally rescaled so that the sum of the face fluxes equals
     Q_target exactly: the imposed flow rate is then a hard input rather than
     an outcome of the discretisation.
+
+    flat=True gives a uniform profile: the right one at the entry of a duct that
+    draws still air through a bell mouth (no boundary layer yet, total pressure
+    uniform). The developed profile is for a pipe fed by a long pipe (flowmeter).
     """
+    if flat:
+        prof = np.ones(mesh.Nr)
+        return prof * (Q_target / float(np.sum(mesh.A_ax[0, :])))
     r = mesh.r_c[0, :]
     R = mesh.R_f[0]
 
@@ -189,7 +196,7 @@ def solve_fv(mesh: FVMesh, config, verbose: bool = True,
 
     # --- inlet condition ----------------------------------------------------
     Q_target = float(config.v_inlet * math.pi * config.R_inlet ** 2)
-    uz_in = inlet_profile(mesh, float(config.Re_D), Q_target)
+    uz_in = inlet_profile(mesh, float(config.Re_D), Q_target, getattr(config, "inlet_flat", False))
     F_in = mesh.A_ax[0, :] * uz_in
 
     # --- initialisation -----------------------------------------------------

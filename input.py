@@ -43,13 +43,29 @@ VENTURI = {
                                #     shrink the inlet through the bell mouth)
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
+    "semiangolo_max_deg": 4.0, # [deg] steepest diffuser wall; above ~4-5 deg it may separate
     "L_disk": 0.02,            # [m] axial length of the fan band; straight section = 2 L_disk
                                #     holds rotor + gap + stator,
                                #     must be < L_max / 4
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter
     "P_max": None,             # [W] largest power, None = no limit
 
+    # --- fan model in the duct ----------------------------------------------
+    "curva_ventola": None,     # None = fixed dp, set for the wanted thrust. Or a fan curve:
+                               #   {"Q_m3_s": [...], "dp_Pa": [...], "fittizia": False, "fonte": "..."}
+                               #   then the thrust is a RESULT (operating point on the curve).
+                               # EXAMPLE, FICTITIOUS, do not use for the design:
+                               #   {"Q_m3_s": [0.0, 0.005, 0.010, 0.015, 0.020],
+                               #    "dp_Pa": [80.0, 75.0, 60.0, 35.0, 0.0], "fittizia": True}
+    "mozzo_su_D_disco": 0.0,   # no dp inside this share of the disk diameter (0 = off)
+    "perdita_swirl": 0.0,      # share of dp lost as swirl without stator (0 = off)
+
     # --- optimisation -------------------------------------------------------
+    "ottimizzatore": "griglia",  # "griglia": scan of exit diameter x diffuser length (robust);
+                                 #   "slsqp": adjoint shape optimisation (more free, can wander)
+    "D_ventola": None,         # [m] fixed fan diameter for the scan, None = largest the inlet allows
+    "scansione_D_uscita": 5,   # exit diameters scanned
+    "scansione_L_diffusore": 4,# diffuser lengths scanned
     "turbulence_model": "baldwin_lomax",
     "n_up": 5,                 # free control points of the intake (5-8: more only adds time)
     "n_down": 8,               # free control points of the diffuser (8-10)

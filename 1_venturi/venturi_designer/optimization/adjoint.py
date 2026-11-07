@@ -87,6 +87,7 @@ FD_STATE = 1e-7  # step of df/dU on the scaled unknowns
 RELAX_KEEP = 3   # updates of nu_t at full strength
 RELAX_DECAY = 0.7  # then each update is this much smaller
 MAX_STEP = 0.2  # largest change of a scaled unknown in one Newton step
+FLAT_INLET = True  # uniform inlet profile (duct drawing still air); False = developed pipe profile
 
 _COLOURINGS: Dict[Tuple[int, int], tuple] = {}
 
@@ -117,7 +118,9 @@ class DuctSystem:
         self.cw2 = -A_w * d1 / (d2 * (d2 - d1))
 
         self.force = disk_force(mesh, z_a, z_b, case.dp_disk, case.rho)
-        self.shape = inlet_profile(mesh, Re_ref, 1.0)     # uz_in per unit Q
+        # Still air drawn through the bell mouth: uniform speed and total pressure at
+        # the entry (the developed pipe profile gave p_t > 0 on the axis, unphysical)
+        self.shape = inlet_profile(mesh, Re_ref, 1.0, flat=FLAT_INLET)     # uz_in per unit Q
         A0 = mesh.A_ax[0, :]
         self.A_in = float(A0.sum())
         self.alpha = float(np.sum(A0 * self.shape ** 3) * self.A_in ** 2)
@@ -369,7 +372,8 @@ def time_march_start(mesh: FVMesh, case: PropulsionCase, sys_: DuctSystem, Q: fl
     cfg = SimpleNamespace(
         rho=case.rho, nu=case.nu, cfl=0.6, time_step="local", tol=1e-4, max_iter=iters,
         v_inlet=v_in, R_inlet=R_in, Re_D=v_in * 2.0 * R_in / case.nu,
-        v_throat=case.V_jet_ideal, turbulence_model=case.turbulence_model, p_inlet=0.0)
+        v_throat=case.V_jet_ideal, turbulence_model=case.turbulence_model, p_inlet=0.0,
+        inlet_flat=FLAT_INLET)
     res = solve_fv(mesh, cfg, verbose=verbose, body_force=sys_.force)
     x = sys_.pack(res.F_ax, res.F_rad, res.p - res.p_outlet, Q)
     x[sys_.n_ax + sys_.n_rad:-1] /= case.rho

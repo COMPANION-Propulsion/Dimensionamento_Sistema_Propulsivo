@@ -51,7 +51,7 @@ from ..solver.fvmesh import build_fvmesh
 
 CF_MIN = 5e-4          # smallest friction coefficient allowed in the diffuser
 MACH_MAX = 0.3         # the solver assumes constant density
-SLOPE_DIFFUSER = math.tan(math.radians(7.0))   # steepest diffuser wall
+SLOPE_DIFFUSER = math.tan(math.radians(4.0))   # default steepest diffuser wall (case.semiangolo_max_deg)
 SLOPE_INTAKE = math.tan(math.radians(30.0))    # steepest intake wall
 BEND_MAX = 0.25        # largest second difference of the control polygon / R_int_max
 KS_RHO = 40.0          # sharpness of the smooth minimum
@@ -149,7 +149,8 @@ def initial_design(case: PropulsionCase, n_up: int = 5, n_down: int = 8):
     # a half cosine of rise dR over L has its steepest slope pi dR / (2 L)
     R_in = min(R_in, R_disk + START_SLOPE * SLOPE_INTAKE * 2.0 * L_up / math.pi)
     R_exit = min(case.R_int_max,
-                 R_disk + START_SLOPE * SLOPE_DIFFUSER * 2.0 * L_down / math.pi)
+                 R_disk + START_SLOPE * math.tan(math.radians(case.semiangolo_max_deg))
+                 * 2.0 * L_down / math.pi)
     z_up = np.linspace(0.0, L_up, 400)
     z_down = np.linspace(0.0, L_down, 800)
     z_a, z_b = L_up, L_up + L_section
@@ -205,6 +206,9 @@ class DuctProblem:
         s.z_b = g.z_b
         if self.disk_profile is not None:
             s.force = s.force * np.asarray(self.disk_profile(mesh.eta_c))[None, :]
+        if c.mozzo_su_D_disco > 0.0 or c.perdita_swirl > 0.0:   # first-order fan limits
+            keep = (1.0 - c.perdita_swirl) * (mesh.eta_c >= c.mozzo_su_D_disco)
+            s.force = s.force * keep[None, :]
         return s
 
     def solve(self, d: np.ndarray) -> FlowSolution:
@@ -286,7 +290,8 @@ class DuctProblem:
             # only widens. A monotone control polygon gives a monotone B-spline, so
             # no bumps (they only add losses and separation risk).
             -np.diff(c_up) / c.R_int_max, np.diff(c_down) / c.R_int_max,
-            1.0 - dr_down / SLOPE_DIFFUSER, 1.0 + dr_down / SLOPE_DIFFUSER,
+            1.0 - dr_down / math.tan(math.radians(c.semiangolo_max_deg)),
+            1.0 + dr_down / math.tan(math.radians(c.semiangolo_max_deg)),
             1.0 - dr_up / SLOPE_INTAKE, 1.0 + dr_up / SLOPE_INTAKE,
             1.0 - bend / BEND_MAX, 1.0 + bend / BEND_MAX))
 
@@ -423,7 +428,11 @@ def report(problem: DuctProblem, d: np.ndarray) -> Dict[str, float]:
     Q = float(sol.x[-1] * s.s_Q)
     A_e = math.pi * g.R_exit ** 2
     r_env, l_env = bell_envelope(g.R_inlet, case.spessore_parete)
-    return dict(dp_disk=case.dp_disk, thrust=T, thrust_from_forces=momentum_balance(s, sol.x),
+    T_forces = momentum_balance(s, sol.x)
+    m_dot = case.rho * Q
+    return dict(dp_disk=case.dp_disk, thrust=T, thrust_from_forces=T_forces,
+                thrust_check_pct=100.0 * (T_forces / T - 1.0),
+                beta=T / (m_dot * Q / A_e) if Q > 0 else float("nan"),
                 power=P, thrust_per_power=T / P, Q=Q, mass_flow=case.rho * Q,
                 V_disk=Q / (math.pi * g.R_disk ** 2), V_exit=Q / A_e,
                 ideal_thrust=(2.0 * case.dp_disk * A_e if case.V0 == 0.0 else float("nan")),

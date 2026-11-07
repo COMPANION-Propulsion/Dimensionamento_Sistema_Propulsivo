@@ -31,7 +31,10 @@ from .export.duct import export_duct_results, output_dirs
 from .geometry import create_venturi_geometry
 from .optimization.shape_opt import DuctProblem, for_grid, initial_design, report
 from .optimization.sizing import run_optimization
-from .optimization.target_thrust import match_thrust, save_design, size_for_thrust
+from .optimization.fan_curve import FanCurve, operating_point
+from .optimization.scan import plot_scan, run_scan
+from .optimization.target_thrust import (SizingResult, initial_dp, match_thrust, save_design,
+                                         size_for_thrust)
 from .solver import solve_fv
 from .solver.fvmesh import build_fvmesh
 from .solver.turbulence import SUPPORTED as TURBULENCE_MODELS
@@ -247,6 +250,32 @@ def load_case(path: str, T_target: Optional[float] = None):
     return case, inputs
 
 
+def scan_sizing(case, layout, inputs, level, curve, T, dirs):
+    """Grid scan of the duct (scan.py), then the dp for the thrust when there is no curve."""
+    grid = level["optimise"][-1]
+    _, d0 = initial_design(case, inputs.get("n_up", 5), inputs.get("n_down", 8))
+    case = replace(case, dp_disk=initial_dp(case, layout, d0))
+    print(f"\nGrid scan on {grid[0]} x {grid[1]}: "
+          f"{inputs.get('scansione_D_uscita', 5)} exit diameters x "
+          f"{inputs.get('scansione_L_diffusore', 4)} diffuser lengths")
+    scan = run_scan(case, layout, grid, curve, inputs.get("D_ventola"),
+                    inputs.get("scansione_D_uscita", 5), inputs.get("scansione_L_diffusore", 4),
+                    case.semiangolo_max_deg, case.P_max, dirs["convergenza"])
+    problem, design = scan.pop("problem"), scan.pop("design")
+    b = scan["migliore"]
+    print(f"Chosen: D_exit {b['D_uscita_mm']:.1f} mm, diffuser {b['L_diffusore_mm']:.1f} mm, "
+          f"T {b['spinta_N']:.5f} N at dp {b['dp_Pa']:.3f} Pa")
+    steps = [dict(ciclo=1, tipo="scansione", griglia=scan["griglia"], dp_disk=b["dp_Pa"],
+                  spinta=b["spinta_N"])]
+    exponent = 1.0
+    if curve is None:
+        print(" Secant on dp for the wanted thrust")
+        problem, rows, exponent = match_thrust(problem, design, T, cycle=1)
+        steps += rows
+    return SizingResult(problem=problem, design=design, steps=steps, exponent=exponent,
+                        converged=True), scan
+
+
 def run_target_thrust(args) -> int:
     """Duct and fan dp for the thrust per nozzle, see the module docstring."""
     results_dir = getattr(args, "results_dir", None)
@@ -267,12 +296,22 @@ def run_target_thrust(args) -> int:
 
     t0 = time.time()
     try:
-        res = size_for_thrust(case, layout, design, level["optimise"],
-                              max_iter=inputs.get("max_iter", 40),
-                              tol_dp=inputs.get("tol_dp", 0.01),
-                              max_cycles=inputs.get("max_cicli_dp", 4),
-                              out_dir=dirs["convergenza"])
-    except RuntimeError as e:
+        curve = FanCurve.from_input(inputs.get("curva_ventola"))
+        if curve is not None:
+            print("Fan curve " + ("(FICTITIOUS EXAMPLE)" if curve.fictitious else "")
+                  + f": {len(curve.Q)} points, operating point on the curve")
+        if inputs.get("ottimizzatore", "griglia") == "griglia":
+            res, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs)
+        else:
+            if curve is not None:
+                raise ValueError("the fan curve works with ottimizzatore = 'griglia' only.")
+            scan = None
+            res = size_for_thrust(case, layout, design, level["optimise"],
+                                  max_iter=inputs.get("max_iter", 40),
+                                  tol_dp=inputs.get("tol_dp", 0.01),
+                                  max_cycles=inputs.get("max_cicli_dp", 4),
+                                  out_dir=dirs["convergenza"])
+    except (RuntimeError, ValueError) as e:
         print(f"Error: {e}")
         return 2
     design, problem = res.design, res.problem
@@ -286,14 +325,21 @@ def run_target_thrust(args) -> int:
     if not est["reliable"]:
         print("WARNING, value not reliable: " + "; ".join(est["problems"]))
 
-    # the same thrust on the finest grid: dp scaled with the measured exponent
     Nz, Nr = level["verify"][-1]
-    dp = problem.case.dp_disk * (T / est["value"]) ** (1.0 / res.exponent)
-    print(f"\nFinal dp on the {Nz} x {Nr} grid")
-    fine = DuctProblem(for_grid(replace(problem.case, dp_disk=dp), Nz, Nr), layout)
     steps = list(res.steps)
     try:
-        fine, rows, k = match_thrust(fine, design, T, res.exponent, cycle=0)
+        if curve is not None:
+            # with a fan curve the thrust is a result: operating point on the finest grid
+            print(f"\nOperating point on the {Nz} x {Nr} grid")
+            fine = DuctProblem(for_grid(problem.case, Nz, Nr), layout)
+            fine, op = operating_point(fine, design, curve, problem.case.dp_disk, verbose=True)
+            rows, k = [dict(tipo="punto di lavoro", **{a: b for a, b in op.items() if a != "passi"})], 1.0
+        else:
+            # the same thrust on the finest grid: dp scaled with the measured exponent
+            dp = problem.case.dp_disk * (T / est["value"]) ** (1.0 / res.exponent)
+            print(f"\nFinal dp on the {Nz} x {Nr} grid")
+            fine = DuctProblem(for_grid(replace(problem.case, dp_disk=dp), Nz, Nr), layout)
+            fine, rows, k = match_thrust(fine, design, T, res.exponent, cycle=0)
     except RuntimeError as e:
         print(f"Error: {e}")
         return 2
@@ -309,7 +355,9 @@ def run_target_thrust(args) -> int:
     print("\nFiles")
     out = export_duct_results(fine, design, summary, dirs, dict(
         source=source, estimate=est, dp_error=dp_error, exponent=k, steps=steps,
-        converged=res.converged))
+        converged=res.converged, scan=scan, curve=curve.to_dict() if curve else None))
+    if scan:
+        plot_scan(scan, os.path.join(dirs["grafici"], "scansione.svg"))
     r = out["results"]
     print(f"  {len(out['files'])} files in {caso.shown(root)}{os.sep}")
     print("\n" + "=" * 66)

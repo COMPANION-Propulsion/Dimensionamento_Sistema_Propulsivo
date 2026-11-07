@@ -103,3 +103,19 @@ e senza un vincolo di lunghezza minima l'attrito spinge a accorciare. Atteso dal
 - Non toccare `../2_ventola/`. Comandi fuori dalla cartella del progetto: chiedere prima.
 - Se ricompare `No module named 'venturi'`, la cache Numba è vecchia: eliminare i `.nbi`/`.nbc`.
 - Nella shell i blocchi lunghi con `'''` si rompono: usare un file di script.
+
+## Revisione 2026-11-07 (richiesta in 7 punti)
+
+- Spinta: T = Σ(ρF²/A + (p − p_amb)A) − ρQV0 all'uscita (termine di pressione 0 per la condizione
+  d'uscita); controllo con `momentum_balance`, `thrust_check_pct` e β = T/(ṁ v_media) nel report.
+- Ingresso: profilo PIATTO (`adjoint.FLAT_INLET`), p_t = 0 come media. Prima era il profilo
+  sviluppato di Nikuradse (asse/media 1.24, p_t +24 Pa sull'asse). Restano fino a +8 Pa di p_t
+  nelle celle vicine alla parete a z < 5 mm: stesso difetto pari/dispari del τ_w a dente di sega,
+  NON risolto alzando KAPPA_FLUX (0.3 e 0.6 peggiorano τ_w). Estendere il dominio alla bocca
+  d'imbocco richiede una griglia diversa.
+- Curva della ventola: `optimization/fan_curve.py`, `VENTURI["curva_ventola"]`; il punto di lavoro
+  e la spinta diventano risultati (secante su dp = curva(Q(dp))).
+- Ottimizzatore di default: `optimization/scan.py`, scansione D_uscita x L_diffusore con D ventola
+  fisso (`VENTURI["D_ventola"]`); SLSQP resta con `ottimizzatore: "slsqp"`.
+- Semiangolo massimo del diffusore 4° (`semiangolo_max_deg`), τ_w minimo nel diffusore per caso.
+- Limiti del disco documentati in `core/propulsion.py`; `mozzo_su_D_disco` e `perdita_swirl`.
