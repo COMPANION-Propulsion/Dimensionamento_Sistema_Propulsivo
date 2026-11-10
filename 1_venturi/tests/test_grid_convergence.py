@@ -54,3 +54,16 @@ def test_levels_are_valid(name):
 
 def test_fine_is_the_finest():
     assert GRID_LEVELS["fine"]["verify"][-1][0] > GRID_LEVELS["medium"]["verify"][-1][0]
+
+
+def test_small_changes_with_implausible_order_use_reference_order():
+    # equal differences of 0.17 %: observed order ~ 0, the plain GCI would give ~17 %
+    h = [1.0, 2.0 ** 0.5, 2.0]
+    est = error_estimate(h, [0.10800, 0.10782, 0.10764])
+    assert est["problems"] == []
+    assert est["method"] == "reference order" and est["notes"]
+    assert est["order"] < 0.5
+    band = 1.25 * 0.00018 / (2.0 ** 0.5 - 1.0)
+    assert est["error"] == pytest.approx(band)
+    assert 0.00018 < est["error"] < 0.01 * 0.108          # above the change seen, below 1 %
+    assert abs(est["extrapolated"] - 0.108) < 0.01 * 0.108

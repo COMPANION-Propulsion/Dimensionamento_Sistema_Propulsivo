@@ -5,6 +5,7 @@ Profilo e numero intero di pale sono enumerati esternamente. Nessuna CFD.
 """
 import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime
 import json
 import math
@@ -202,6 +203,45 @@ def default_output_directory(case):
     return Path(__file__).resolve().parents[1]/'ventola_output'/datetime.now().strftime('slsqp_%Y%m%d_%H%M%S_%f')
 
 
+MAX_DEFAULT_JOBS = 4          # processi di default: ognuno ricarica numpy/scipy
+MEMORY_PER_JOB = 800*2**20    # [B] memoria impegnata stimata per processo (scipy + polari)
+
+
+def _available_commit_bytes():
+    """Memoria impegnabile libera (RAM + file di paging) su Windows, None altrove o se ignota."""
+    if os.name != 'nt':
+        return None
+    try:
+        import ctypes
+
+        class _Status(ctypes.Structure):
+            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
+                        ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
+                        ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
+                        ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
+                        ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+        status = _Status()
+        status.dwLength = ctypes.sizeof(_Status)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+        return int(status.ullAvailPageFile)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def default_jobs():
+    """Processi in parallelo di default: al più MAX_DEFAULT_JOBS e quanti ne regge la memoria.
+
+    Su Windows ogni processo figlio reimporta scipy: con tutti i core (20+) la memoria
+    impegnabile finisce ('Il file di paging è troppo piccolo') e il pool si rompe.
+    """
+    jobs = min(os.cpu_count() or 1, MAX_DEFAULT_JOBS)
+    free = _available_commit_bytes()
+    if free is not None:
+        jobs = min(jobs, max(1, free//MEMORY_PER_JOB))
+    return max(1, int(jobs))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input',type=Path,required=True,
@@ -212,8 +252,9 @@ def main(argv=None):
     parser.add_argument('--maxiter',type=int)
     parser.add_argument('--validate-only',action='store_true')
     parser.add_argument('--output',type=Path)
-    parser.add_argument('--jobs',type=int,default=os.cpu_count() or 1,
-                        help='Coppie profilo/pale ottimizzate in parallelo (default: tutti i core).')
+    parser.add_argument('--jobs',type=int,default=None,
+                        help=f'Coppie profilo/pale ottimizzate in parallelo (default: al più '
+                             f'{MAX_DEFAULT_JOBS}, meno se la memoria libera è poca).')
     args = parser.parse_args(argv)
     try:
         case = load_case(args.input)
@@ -255,7 +296,9 @@ def main(argv=None):
     # Le coppie profilo/pale sono indipendenti: un processo per coppia.
     pairs = [(profile, b) for profile in profiles for b in blades]
     order = {pair: i for i, pair in enumerate(pairs)}
-    jobs = max(1, min(args.jobs, len(pairs)))
+    if args.jobs is not None and args.jobs < 1:
+        parser.error('--jobs deve essere positivo.')
+    jobs = max(1, min(args.jobs or default_jobs(), len(pairs)))
     print(f'SLSQP su {len(pairs)} coppie profilo/pale, {jobs} in parallelo', flush=True)
 
     def record(run):
@@ -266,14 +309,28 @@ def main(argv=None):
         (out/'optimization.json').write_text(json.dumps(report,indent=2,allow_nan=False),encoding='utf-8')
         print(f"  {run['profile']}, {run['blades']} pale: {run['status']}: {run.get('energy_J')} J",flush=True)
 
-    if jobs == 1:
-        for profile, b in pairs:
-            record(optimize_pair(case,profile,b,args.maxiter))
-    else:
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
-            futures = [pool.submit(optimize_pair,case,profile,b,args.maxiter) for profile, b in pairs]
+    done = set()
+    if jobs > 1:
+        pool = ProcessPoolExecutor(max_workers=jobs)
+        try:
+            futures = {pool.submit(optimize_pair,case,profile,b,args.maxiter): (profile, b)
+                       for profile, b in pairs}
             for future in as_completed(futures):
                 record(future.result())
+                done.add(futures[future])
+            pool.shutdown()
+        except (BrokenProcessPool, ImportError, MemoryError, OSError) as exc:
+            pool.shutdown(wait=True, cancel_futures=True)
+            # Un processo figlio morto (tipicamente memoria esaurita all'import di scipy)
+            # rompe tutto il pool: le coppie già finite restano, le altre si fanno in sequenza.
+            print(f'ATTENZIONE: esecuzione in parallelo interrotta ({type(exc).__name__}: {exc}); '
+                  f'{len(pairs)-len(done)} coppie rimaste proseguono in sequenza.', flush=True)
+            report.setdefault('warnings', []).append(
+                f'Parallel pool failed ({type(exc).__name__}); remaining pairs run sequentially.')
+    for profile, b in pairs:
+        if (profile, b) not in done:
+            record(optimize_pair(case,profile,b,args.maxiter))
+            done.add((profile, b))
     report['complete']=True
     if report['best']:
         best = report['best']

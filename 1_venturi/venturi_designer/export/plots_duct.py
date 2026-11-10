@@ -200,7 +200,8 @@ def plot_optimisation(histories: Dict[str, List[dict]], path: str) -> str:
     a2.set_xlabel("iterazione SLSQP (cumulata)")
     for a in (a1, a2):
         a.grid(True, ls=":", alpha=0.6)
-        a.legend(fontsize=8)
+        if a.get_legend_handles_labels()[0]:   # nothing to label in grid-scan mode
+            a.legend(fontsize=8)
     a1.set_title("Ottimizzazione di forma: ogni tratto è una griglia o un ciclo su Δp")
     return _save(fig, path)
 
@@ -237,7 +238,9 @@ def plot_grid_study(grid: Optional[dict], path: str) -> Optional[str]:
         ax.annotate(f"{r['Nz']}x{r['Nr']}", (hi, r["thrust"]), xytext=(4, 4),
                     textcoords="offset points", fontsize=8)
     ax.errorbar([h.min()], [est["value"]], yerr=[est["error"]], fmt="none", ecolor="r",
-                capsize=6, label=f"banda GCI ±{est['error_pct']:.2f} %")
+                capsize=6, label=(f"banda GCI (ordine di riferimento p = 1) ±{est['error_pct']:.2f} %"
+                                  if est.get("method") == "reference order"
+                                  else f"banda ±{est['error_pct']:.2f} %"))
     ax.plot([0.0], [est["extrapolated"]], "r*", ms=10, label="estrapolata (h → 0)")
     ax.set_xlim(left=-0.05)
     ax.set_xlabel("h / h_fine [-]")

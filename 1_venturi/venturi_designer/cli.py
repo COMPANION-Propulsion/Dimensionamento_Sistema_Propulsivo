@@ -257,7 +257,11 @@ def scan_sizing(case, layout, inputs, level, curve, T, dirs):
     case = replace(case, dp_disk=initial_dp(case, layout, d0))
     print(f"\nGrid scan on {grid[0]} x {grid[1]}: "
           f"{inputs.get('scansione_D_uscita', 5)} exit diameters x "
-          f"{inputs.get('scansione_L_diffusore', 4)} diffuser lengths")
+          f"{inputs.get('scansione_L_diffusore', 4)} diffuser lengths, "
+          f"half angle <= {case.semiangolo_max_deg:g} deg, separated cases (tau_w < 0) discarded")
+    if case.semiangolo_max_deg > 5.0:
+        print(f"WARNING: semiangolo_max_deg = {case.semiangolo_max_deg:g} deg in the input; "
+              "diffusers above ~4-5 deg tend to separate")
     scan = run_scan(case, layout, grid, curve, inputs.get("D_ventola"),
                     inputs.get("scansione_D_uscita", 5), inputs.get("scansione_L_diffusore", 4),
                     case.semiangolo_max_deg, case.P_max, dirs["convergenza"])
@@ -291,8 +295,11 @@ def run_target_thrust(args) -> int:
     dirs = output_dirs(root)
     level = GRID_LEVELS[inputs["grid"]]
     print(f"Thrust per nozzle {T:.5g} N (from {source})")
+    scan_mode = inputs.get("ottimizzatore", "griglia") == "griglia"
     print(f"Tube within D {case.D_ext_max * 1e3:.1f} mm x L {case.L_max * 1e3:.1f} mm, inner duct "
-          f"up to D {2e3 * case.R_int_max:.1f} mm, {layout.n_vars} design variables")
+          f"up to D {2e3 * case.R_int_max:.1f} mm, "
+          + ("scan variables: exit diameter x diffuser length" if scan_mode
+             else f"{layout.n_vars} design variables"))
 
     t0 = time.time()
     try:
@@ -324,6 +331,8 @@ def run_target_thrust(args) -> int:
           f"at dp = {problem.case.dp_disk:.4f} Pa")
     if not est["reliable"]:
         print("WARNING, value not reliable: " + "; ".join(est["problems"]))
+    for note in est.get("notes", []):
+        print("Note on the grid band: " + note)
 
     Nz, Nr = level["verify"][-1]
     steps = list(res.steps)

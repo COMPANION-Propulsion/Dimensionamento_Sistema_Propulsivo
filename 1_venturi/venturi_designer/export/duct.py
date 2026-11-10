@@ -122,6 +122,8 @@ def build_results(problem, design, summary: Dict, F: Dict, cad: Dict, info: Dict
             estrapolata_N=est.get("extrapolated", float("nan")),
             affidabile=bool(est.get("reliable", False)),
             problemi="; ".join(est.get("problems", [])) or "-",
+            metodo_banda_griglia=est.get("method", "GCI"),
+            note_griglia="; ".join(est.get("notes", [])) or "-",
             spinta_su_potenza_N_W=summary["thrust_per_power"]),
         geometria=dict(
             D_ingresso_m=summary["D_inlet"], D_ventola_m=summary["D_disk"],
@@ -170,12 +172,20 @@ def scan_lines(scan):
     return lines + [""]
 
 
+_BAND_METHOD = {"GCI": "GCI", "flat": "griglie coincidenti, 1.25 x dispersione",
+                "oscillatory": "risultato oscillante, 1.25 x dispersione",
+                "reference order": "GCI con ordine di riferimento p = 1"}
+
+
 def write_report(results: Dict, path: str) -> str:
     v, s, g, f, n = (results[k] for k in ("ventola", "spinta", "geometria", "flusso", "numerica"))
     pl = results["perdite"]
     warn = []
     if not s["affidabile"]:
         warn.append(f"- **Studio di griglia non affidabile**: {s['problemi']}.")
+    elif s.get("metodo_banda_griglia") == "reference order":
+        warn.append("- Studio di griglia: ordine osservato non plausibile ma differenze piccole; "
+                    f"banda dalla GCI con ordine di riferimento p = 1 ({s['note_griglia']}).")
     if not g["ingombro_rispettato"]:
         warn.append("- **Il tubo esce dall'ingombro massimo.**")
     if f["celle_flusso_invertito"] > 0 or f["margine_separazione"] < 0:
@@ -203,8 +213,10 @@ def write_report(results: Dict, path: str) -> str:
         f"(scarto {s['scarto_bilancio_forze_pct']:+.2f} %, deve stare entro ±1 %)",
         f"- β = spinta / (ṁ v_media,uscita) = {s['beta_spinta_su_mdot_v']:.3f} "
         f"(1 = getto uniforme; > 1 profilo non uniforme)",
-        f"- errore di griglia (GCI): ±{s['errore_griglia_N']:.4g} N "
-        f"({s['errore_griglia_pct']:.2f} %), estrapolata {s['estrapolata_N']:.5g} N",
+        f"- errore di griglia ({_BAND_METHOD.get(s.get('metodo_banda_griglia', 'GCI'), 'GCI')}): "
+        f"±{s['errore_griglia_N']:.4g} N "
+        f"({s['errore_griglia_pct']:.2f} %), estrapolata {s['estrapolata_N']:.5g} N"
+        + (f"; nota: {s['note_griglia']}" if s.get("note_griglia", "-") != "-" else ""),
         f"- spinta / potenza: {s['spinta_su_potenza_N_W']:.4f} N/W", "",
         "## Geometria", "",
         f"- condotto: D ingresso {g['D_ingresso_m'] * 1e3:.2f} mm, D ventola "

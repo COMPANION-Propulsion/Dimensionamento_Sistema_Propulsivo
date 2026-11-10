@@ -183,7 +183,9 @@ def export_duct_xlsx(F: Dict, results: Dict, design: np.ndarray, histories: Dict
         info = [("valore (griglia fine)", est["value"]), ("estrapolata", est["extrapolated"]),
                 ("errore ±", est["error"]), ("errore [%]", est["error_pct"]),
                 ("ordine osservato", est["order"]), ("affidabile", est["reliable"]),
-                ("problemi", "; ".join(est["problems"]) or "-")]
+                ("problemi", "; ".join(est["problems"]) or "-"),
+                ("metodo della banda", est.get("method", "GCI")),
+                ("note", "; ".join(est.get("notes", [])) or "-")]
         for i, (k, v) in enumerate(info):
             wq.cell(row=last + 2 + i, column=1, value=k).font = Font(bold=True)
             wq.cell(row=last + 2 + i, column=2, value=v)

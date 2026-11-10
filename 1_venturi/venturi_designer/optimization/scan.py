@@ -21,7 +21,8 @@ study, export) works on it unchanged. A case is scored by
     with fan curve      thrust at the operating point on the curve (fan_curve.py)
 
 Cases whose diffuser half angle is above the limit, or that leave the size
-limits, are not solved; the wall shear in the diffuser is recorded for each.
+limits, are not solved; the wall shear in the diffuser is recorded for each, and
+a case with negative wall shear in the diffuser (separated) is never chosen.
 """
 
 from __future__ import annotations
@@ -116,13 +117,18 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
                        potenza_W=r["Q"] * problem.case.dp_disk, L_tubo_mm=1e3 * r["L_tube"],
                        tau_w_min_diffusore_Pa=float(np.min(w["tau_w"][w["z"] > g.z_b])),
                        celle_invertite=r["reversed_cells"])
-            if P_max is not None and row["potenza_W"] > P_max:
+            if row["tau_w_min_diffusore_Pa"] < 0.0:
+                # parete del diffusore con flusso di ritorno: la spinta di una forma separata
+                # non è affidabile (e il modello 2D non la segue bene), il caso non si sceglie
+                row["stato"] = "separato (tau_w < 0 nel diffusore)"
+            elif P_max is not None and row["potenza_W"] > P_max:
                 row["stato"] = f"potenza > {P_max:g} W"
             rows.append(row)
             if verbose:
                 print(f"  D_exit {row['D_uscita_mm']:5.1f} mm, L_diff {row['L_diffusore_mm']:5.1f} mm, "
                       f"{row['semiangolo_deg']:.2f} deg -> T {row['spinta_N']:.5f} N, dp {row['dp_Pa']:.2f} Pa, "
-                      f"tau_w min {row['tau_w_min_diffusore_Pa']:+.4f} Pa [{time.time()-t0:.0f} s]", flush=True)
+                      f"tau_w min {row['tau_w_min_diffusore_Pa']:+.4f} Pa [{time.time()-t0:.0f} s]"
+                      + ("" if row["stato"] == "ok" else f"  -> {row['stato']}"), flush=True)
             if row["stato"] == "ok" and (best is None or row["spinta_N"] > best[0]["spinta_N"]):
                 best = (row, problem, d)
     out = dict(griglia=f"{grid[0]}x{grid[1]}", D_ventola_mm=2e3 * R_fan,
@@ -134,7 +140,7 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
         with open(os.path.join(out_dir, "scansione.json"), "w", encoding="utf-8") as fh:
             json.dump(out, fh, indent=1)
     if best is None:
-        raise RuntimeError("no case of the scan converged within the limits")
+        raise RuntimeError("no case of the scan converged within the limits without separation")
     out["problem"], out["design"] = best[1], best[2]
     return out
 

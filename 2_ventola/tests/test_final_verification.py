@@ -84,6 +84,40 @@ class FinalVerificationTests(unittest.TestCase):
             self.assertTrue((out/'00_sintesi'/'RISULTATO.md').exists())
             export.assert_not_called()
 
+    def test_broken_pool_falls_back_to_sequential_pairs(self):
+        from concurrent.futures import Future
+        from concurrent.futures.process import BrokenProcessPool
+        from ventola_designer.optimizer import main
+
+        class BrokenPool:                    # every worker died (e.g. paging file full)
+            def __init__(self,*a,**k): pass
+            def submit(self,*a,**k):
+                f=Future(); f.set_exception(BrokenProcessPool('worker died')); return f
+            def shutdown(self,*a,**k): pass
+
+        root=Path(__file__).resolve().parents[1]
+        def failed(case,profile,blades,maxiter=None):
+            return {'profile':profile,'blades':blades,'accepted':False,
+                    'status':'final_verification_failed','verification_error':'Vincoli violati'}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch('ventola_designer.optimizer.ProcessPoolExecutor',BrokenPool), \
+             patch('ventola_designer.optimizer.optimize_pair',side_effect=failed) as opt, \
+             patch('ventola_designer.optimizer.export_geometry'), \
+             contextlib.redirect_stdout(io.StringIO()) as log:
+            out=Path(tmp)/'result'
+            code=main(['--input',str(root/'input_esempio.json'),'--profiles','NACA4412',
+                       '--blades','2','3','4','--output',str(out),'--jobs','3'])
+            report=json.loads((out/'00_sintesi'/'report.json').read_text())
+        self.assertEqual(code,2)
+        self.assertEqual(opt.call_count,3)
+        self.assertEqual([r['blades'] for r in report['runs']],[2,3,4])
+        self.assertTrue(report['complete'])
+        self.assertIn('in sequenza',log.getvalue())
+
+    def test_default_jobs_is_bounded(self):
+        from ventola_designer.optimizer import default_jobs, MAX_DEFAULT_JOBS
+        self.assertTrue(1<=default_jobs()<=MAX_DEFAULT_JOBS)
+
 
 if __name__=='__main__':
     unittest.main()

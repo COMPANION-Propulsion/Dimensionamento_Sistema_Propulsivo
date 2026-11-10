@@ -24,7 +24,8 @@ python -m ventola_designer size --input PERCORSO.json [--jobs N] [--output CARTE
 python -m unittest discover -s tests
 ```
 
-`--jobs N`: coppie profilo/pale in parallelo (default: tutti i core). Senza
+`--jobs N`: coppie profilo/pale in parallelo (default: al più 4, meno se la memoria
+libera è poca; se il pool di processi si rompe le coppie rimaste vanno in sequenza). Senza
 `--output` i risultati vanno nel `3_ventola/` del caso Venturi importato, o in
 una cartella datata di `ventola_output/` se l'input non viene da un caso.
 

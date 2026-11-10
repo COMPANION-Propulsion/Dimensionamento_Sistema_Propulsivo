@@ -54,6 +54,8 @@ DEFAULT_LEVELS = "64x26,90x36,128x51"
 P_RANGE = (0.5, 3.0)      # plausible observed order of a second-order scheme
 ASYMPTOTIC_TOL = 0.15     # allowed distance of the asymptotic ratio from 1
 FLAT_TOL = 1e-3           # results closer than this (relative) are grid independent
+SMALL_DIFF_TOL = 0.02     # grid-to-grid changes below this (relative) are "small", see error_estimate
+P_REF = 1.0               # reference order used when the observed one is not plausible
 DEFAULT_TOL = 1e-4   # tighter than a normal run, so the iteration error is
                      # small next to the grid error being measured
 
@@ -101,6 +103,10 @@ def gci(h: Sequence[float], phi: Sequence[float], safety: float = 1.25,
             break
         p = p_new
     rp = r21 ** p
+    if rp - 1.0 < 1e-12:
+        # equal differences on the three grids: p = 0, no extrapolation possible
+        return GCIResult(p=p, phi_ext=float("nan"), e_a21=abs(e21 / f1), e_ext21=float("nan"),
+                         gci21=float("inf"), oscillatory=s < 0.0)
     phi_ext = (rp * f1 - f2) / (rp - 1.0)
     e_a21 = abs((f1 - f2) / f1)
     e_ext21 = abs((phi_ext - f1) / phi_ext)
@@ -186,22 +192,50 @@ def error_estimate(h: Sequence[float], phi: Sequence[float], safety: float = 1.2
     goes up and down, the GCI means nothing, and the band falls back on the
     spread of the three results. The asymptotic ratio should be close to 1:
     far from it, the grids are not yet fine enough for Richardson to hold.
+
+    'method' says how the band was built ("GCI", "flat", "oscillatory",
+    "reference order"); 'notes' are remarks that do not make it unreliable.
     """
     g = gci(h, phi, safety)
+    extrapolated = g.phi_ext
     f1, f2, f3 = phi
     problems: List[str] = []
+    notes: List[str] = []
     spread = max(phi) - min(phi)
     if spread <= FLAT_TOL * abs(f1):
         # the differences are at the level of the iteration error: the order
         # means nothing, and the spread itself is the band
         return dict(value=f1, extrapolated=f1, error=safety * spread,
                     error_pct=100.0 * safety * spread / abs(f1), order=float("nan"),
-                    asymptotic_ratio=float("nan"), problems=problems)
+                    asymptotic_ratio=float("nan"), problems=problems, method="flat",
+                    notes=["three grids within "
+                           f"{100 * FLAT_TOL:g} %: band = {safety:g} x spread"])
+    small = max(abs(f1 - f2), abs(f2 - f3)) <= SMALL_DIFF_TOL * abs(f1)
     if g.oscillatory:
         error = safety * (max(phi) - min(phi))
         ratio = float("nan")
         problems.append("the result goes up and down with the grid")
+        method = "oscillatory"
+    elif small and not P_RANGE[0] <= g.p <= P_RANGE[1]:
+        # Small changes (< SMALL_DIFF_TOL) but an implausible observed order. With
+        # nearly equal differences (e.g. 0.17 % and 0.17 %) Richardson gives p ~ 0,
+        # and r^p - 1 ~ 0 in the GCI denominator blows the band up (16.8 % and an
+        # extrapolated value 14 % away, for grids that differ by 0.17 %). With p > 3
+        # it would instead shrink the band below the change actually seen. Neither
+        # is a measure of the grid error: use the GCI with a reference order
+        # P_REF = 1 (first order, conservative for this second-order scheme):
+        #     band = safety * |f1 - f2| / (r21^P_REF - 1),
+        # about 3 x the fine-middle change for r21 = 1.41, and never below it.
+        r21 = h[1] / h[0]
+        error = safety * abs(f1 - f2) / (r21 ** P_REF - 1.0)
+        ratio = float("nan")
+        extrapolated = f1 + (f1 - f2) / (r21 ** P_REF - 1.0)
+        method = "reference order"
+        notes.append(f"observed order {g.p:.2f} outside {P_RANGE[0]}..{P_RANGE[1]} with "
+                     f"changes below {100 * SMALL_DIFF_TOL:g} %: band from the GCI with "
+                     f"reference order p = {P_REF:g}")
     else:
+        method = "GCI"
         error = g.gci21 * abs(f1)
         ratio = 1.0
         if g.gci21 > 0.0:
@@ -212,9 +246,9 @@ def error_estimate(h: Sequence[float], phi: Sequence[float], safety: float = 1.2
             problems.append(f"observed order {g.p:.2f} outside {P_RANGE[0]}..{P_RANGE[1]}")
         if abs(ratio - 1.0) > ASYMPTOTIC_TOL:
             problems.append(f"not in the asymptotic range (ratio {ratio:.3f})")
-    return dict(value=f1, extrapolated=f1 if g.oscillatory else g.phi_ext, error=error,
+    return dict(value=f1, extrapolated=f1 if g.oscillatory else extrapolated, error=error,
                 error_pct=100.0 * error / abs(f1), order=g.p, asymptotic_ratio=ratio,
-                problems=problems)
+                problems=problems, method=method, notes=notes)
 
 
 def run_duct_level(design_file: str, Nz: int, Nr: int) -> Dict:
@@ -275,6 +309,8 @@ def duct_study(design_file: str, levels: Sequence[Tuple[int, int]], jobs: int) -
               f"({estimate['error_pct']:.2f} %), extrapolated {estimate['extrapolated']:.4f} N, "
               + ("reliable." if estimate["reliable"]
                  else "NOT reliable: " + "; ".join(estimate["problems"]) + ".")]
+    lines.append(f"Band method: {estimate['method']}"
+                 + (" (" + "; ".join(estimate["notes"]) + ")" if estimate["notes"] else "") + ".")
     text = "\n".join(lines) + "\n"
     with open(os.path.join(out_dir, "grid_study.md"), "w", encoding="utf-8") as fh:
         fh.write(text)
