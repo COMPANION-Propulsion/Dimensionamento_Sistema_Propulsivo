@@ -10,7 +10,7 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": "TEST_Dati_CAD",          # None = name built from the inputs + hash, or a string of your choice
+    "nome": "TEST_Dati_CAD_Correzione",          # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
