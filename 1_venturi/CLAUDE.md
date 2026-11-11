@@ -1,5 +1,7 @@
 # 1_venturi: note di ripresa
 
+**Aggiornamento 2026-11-11.** Non valgono più, nel testo sotto: la catena comprende ora anche `2_ventola` e `3_sistema`, collegati da `../run_sistema.py` (quindi non valgono "2_ventola: non collegata, NON toccarla", "Non toccare `../2_ventola/`" né "Il collegamento con `2_ventola` è da fare"); `gap_parete` nell'input attuale è 3 mm (non 5 mm); `semiangolo_max_deg` nell'input attuale è 5 gradi (non 4; massimo deciso dal team, oltre 4-5 gradi il diffusore può separare); il raggio della bocca d'imbocco è l'input `raggio_bocca_su_D`; l'input ha ora `L_min` = 0.10 m (non c'è più "nessun vincolo di lunghezza minima"); la griglia `fine` è stata eseguita (risultati con griglia 256x102 in `risultati/TEST_Dati_CAD_Correzione/2_venturi/00_sintesi/risultati.json`).
+
 Stato al 2026-11-03. Il venturi ora risolve il problema **inverso**: dalla spinta per ugello e
 dall'ingombro del tubo trova forma, diametro e posizione della ventola e il **Δp** del disco
 attuatore, che andrà allo script della ventola. Valori ancora **segnaposto** in `../input.py`.

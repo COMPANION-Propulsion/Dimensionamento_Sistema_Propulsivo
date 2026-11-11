@@ -47,11 +47,12 @@ def interpolate(nodes, values, s):
 
 
 def blade_nodes(rotor):
-    """Nodi lungo l'apertura per corda e calettamento (interpolazione lineare fra nodi).
+    """Nodi lungo l'apertura per corda e calettamento (fra i nodi: cubica a derivata nulla ai nodi, S).
 
-    Meno nodi = pala piu regolare: 2 nodi danno corda e calettamento lineari,
-    senza salti fra radice e meta pala che il BEMT 2D non vede ma un flusso 3D
-    pagherebbe in perdite. Default 4 (i test e il modo storico).
+    Meno nodi = pala piu regolare: con 2 nodi corda e calettamento vanno da radice a punta
+    in modo monotono e regolare, ma non lineare (andamento a S), senza salti fra radice e
+    meta pala che il BEMT 2D non vede ma un flusso 3D pagherebbe in perdite.
+    Default 4 (i test e il modo storico).
     """
     n = int(rotor.get("blade_nodes", 4))
     if n < 2:
