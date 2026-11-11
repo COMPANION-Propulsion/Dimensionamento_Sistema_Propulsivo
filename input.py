@@ -29,7 +29,9 @@ VENTURI = {
     # --- operating point ----------------------------------------------------
     "fluid": "air_20C",        # key of the fluid table (python run_venturi.py --list-fluids)
     "V0": 0.0,                 # flight speed [m/s], 0 = static
-    "p_amb": 101325.0,         # ambient pressure [Pa]
+    "p_amb": 101325.0,         # ambient pressure the duct and the fan are sized at [Pa]
+    "p_cabina": 82500.0,       # [Pa] cabin pressure during the parabolas (rho 0.98 kg/m3 at 20 C): only for the
+                               #     ground / flight comparison in the outputs, None = no comparison
 
     # --- thrust -------------------------------------------------------------
     "T_ugello": None,          # [N] None = from risultati/<caso>/1_spinta/spinta.json
@@ -101,7 +103,7 @@ VENTOLA = {
                                              #   (0.8) and the gap between blades still cap the root
     "pale_candidate": [3, 4, 5, 6, 7],
     "nodi_pala": 3,                          # nodes of chord and pitch along the blade:
-                                             #   2 = linear (most regular), 3-4 = more freedom
+                                             #   2 = smooth S-shaped from root to tip (not linear), 3-4 = more freedom
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0,                         # duration of the operating point (scales the energy)
     "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
