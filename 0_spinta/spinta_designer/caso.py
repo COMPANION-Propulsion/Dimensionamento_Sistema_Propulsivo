@@ -99,6 +99,13 @@ def case_dir(path: str = INPUT_FILE, results_dir: Optional[str] = None) -> str:
                 f"{root} holds a case with other inputs (hash {old}, now {h}). Change "
                 f"CASO['nome'], set it to None for an automatic name, or set "
                 f"CASO['sovrascrivi'] = True.")
+        if old != h:
+            stale = [d for d in STEP_DIRS.values()
+                     if d != STEP_DIRS["spinta"] and os.path.isdir(os.path.join(root, d))]
+            if stale:
+                print(f"WARNING: {root} held a case with other inputs (hash {old}, now {h}). "
+                      f"These steps were computed with the old inputs and must be rerun: "
+                      f"{', '.join(stale)}.")
     os.makedirs(root, exist_ok=True)
     with open(stamp, "w", encoding="utf-8") as fh:
         json.dump(dict(nome=os.path.basename(root), hash=h,
