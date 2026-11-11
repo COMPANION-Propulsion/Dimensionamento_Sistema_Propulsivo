@@ -36,6 +36,7 @@ FAN_DEFAULTS = {
     "statore": {"presente": True, "pale": None, "solidita": 1.0, "profilo": "NACA4412",
                 "gioco_assiale_m": 0.002},
     "giri_min_max_rpm": [5000.0, 30000.0], "calettamento_min_max_deg": [0.0, 75.0],
+    "corda_su_D_min_max": [0.04, 0.22],
     "pale_candidate": [2, 3, 4, 5, 6, 7, 8], "nodi_pala": 2,
     "profili_candidati": ["NACA0012", "NACA2412", "NACA4412", "NACA4415"],
     "durata_s": 1.0, "gioco_punta_m": 0.0005, "potenza_max_W": None, "jobs": None, "sizing": {},
@@ -90,7 +91,8 @@ def fan_input(input_file: str) -> str:
         "operating_points": [{"name": "venturi", "venturi_result": venturi,
                               "duration_s": v["durata_s"]}],
         "sizing": {"loss_model": "none",
-                   "pitch_deg_bounds": list(v["calettamento_min_max_deg"]), **v["sizing"]},
+                   "pitch_deg_bounds": list(v["calettamento_min_max_deg"]),
+                   "chord_over_D_bounds": list(v["corda_su_D_min_max"]), **v["sizing"]},
         "cad": {"tip_clearance_m": v["gioco_punta_m"]},
         "stator": {"enabled": bool(st["presente"]), "vanes": st["pale"],
                    "solidity": st["solidita"], "profile": st["profilo"],
@@ -177,7 +179,8 @@ def write_summary(input_file: str) -> None:
     if s:
         lines += ["## 1. Spinta (`1_spinta/`)", "",
                   f"- {s['input']['distanza']:g} m in {s['input']['tempo']:g} s, "
-                  f"{s['input']['massa']:g} kg, profilo `{s['input']['profilo']}`",
+                  f"{s['input']['massa']:g} kg, profilo `{s['input']['profilo']}`, "
+                  f"disturbo residuo {s['input'].get('disturbo_residuo_g', 0.0):g} g",
                   f"- spinta della faccia {s['T_totale_N']:.4g} N, "
                   f"**per ugello {s['T_ugello_N']:.4g} N** ({s['input']['n_ugelli']} ugelli)", ""]
     if v:

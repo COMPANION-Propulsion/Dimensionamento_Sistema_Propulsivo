@@ -15,13 +15,14 @@ CASO = {
 }
 
 SPINTA = {
-    "distanza": 0.15,           # [m] distance to cover, from rest to rest
+    "distanza": 0.2,         # [m] distance to cover, from rest to rest
     "tempo": 5,             # [s] time available
     "massa": 4.5,             # [kg] mass of the cube
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (smallest thrust) or "trapezio"
     "frazione_crociera": 0.0,  # [-] "trapezio" only: share of the time at constant speed, 0..0.9
     "fattore_margine": 2,    # [-] multiplies the thrust needed
+    "disturbo_residuo_g": 0.01,  # [g] residual acceleration of the parabolic flight the thrust must overcome, 0 = free fall
 }
 
 VENTURI = {
@@ -41,9 +42,11 @@ VENTURI = {
     "gap_parete": 0.003,       # [m] from the outer edge to the inner duct (wall + margin)
     "spessore_parete": 0.003,  # [m] wall of the CAD tube, at most gap_parete (thick walls
                                #     shrink the inlet through the bell mouth)
+    "raggio_bocca_su_D": 0.2,  # [-] bell-mouth radius / inlet diameter (0.05-0.5): smaller leaves
+                               #     more diameter to the fan, below ~0.15 the inlet loss grows
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
-    "semiangolo_max_deg": 10.0, # [deg] steepest diffuser wall; above ~4-5 deg it may separate
+    "semiangolo_max_deg": 5.0,  # [deg] steepest diffuser wall; keep it at 5 or below: above ~4-5 deg it may separate
     "L_disk": 0.03,            # [m] axial length of the fan band; straight section = 2 L_disk
                                #     holds rotor + gap + stator,
                                #     must be < L_max / 4
@@ -93,6 +96,9 @@ VENTOLA = {
                                              #   on the blades = less separation
     "calettamento_min_max_deg": [0.0, 75.0], # blade pitch bounds [deg]; small hubs need a
                                              #   steep root (flow angle up to 60-70 deg)
+    "corda_su_D_min_max": [0.04, 0.40],      # blade chord / fan diameter bounds (it was 0.22 at most,
+                                             #   and the 3-blade design sat on it); the solidity limit
+                                             #   (0.8) and the gap between blades still cap the root
     "pale_candidate": [3, 4, 5, 6, 7],
     "nodi_pala": 3,                          # nodes of chord and pitch along the blade:
                                              #   2 = linear (most regular), 3-4 = more freedom
