@@ -125,7 +125,7 @@ def offset_bspline(knots: np.ndarray, poles: np.ndarray, t: float) -> Piece:
 # ---------------------------------------------------------------------------
 def _bell(geom) -> Segment:
     R = geom.R_inlet * 1e3
-    Rb = bell_radius(2.0 * R, geom.config.wall_thickness * 1e3)
+    Rb = bell_radius(2.0 * R, geom.config.wall_thickness * 1e3, geom.config.bell_radius_ratio)
     a = math.radians(BELL_SWEEP_DEG)
     centre = (0.0, R + Rb)
     start = (-Rb * math.sin(a), centre[1] - Rb * math.cos(a))

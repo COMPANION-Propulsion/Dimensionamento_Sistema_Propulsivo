@@ -82,6 +82,7 @@ class PropulsionCase:
     L_disk: float                # axial length of the disk band [m]
     gap_parete: float = 0.005    # outer edge to inner duct [m]
     spessore_parete: float = 0.002   # wall of the CAD tube [m]
+    raggio_bocca_su_D: float = 0.2   # bell-mouth radius / inlet diameter of the CAD tube
     D_disk_min_ratio: float = 0.4    # smallest duct radius / R_int_max
     dp_disk: float = 100.0       # total-pressure rise of the disk [Pa], set by the dp loop
     T_target: Optional[float] = None # thrust per nozzle wanted [N]
@@ -114,6 +115,9 @@ class PropulsionCase:
         if self.spessore_parete > self.gap_parete:
             raise ValueError(f"spessore_parete ({self.spessore_parete}) must not exceed "
                              f"gap_parete ({self.gap_parete}).")
+        if not 0.05 <= self.raggio_bocca_su_D <= 0.5:
+            raise ValueError(f"raggio_bocca_su_D must be between 0.05 and 0.5, got "
+                             f"{self.raggio_bocca_su_D}.")
         if self.R_int_max <= 0.0:
             raise ValueError(f"gap_parete ({self.gap_parete}) leaves no room inside "
                              f"D_ext_max ({self.D_ext_max}).")

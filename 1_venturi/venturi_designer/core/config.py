@@ -51,6 +51,7 @@ class VenturiConfig:
     blend_R3_ratio: float = 0.2      # corner radius throat -> cone, / d
     blend_R4_ratio: float = 0.2      # corner radius cone -> outlet, / D
     wall_thickness: float = 0.003    # tube wall of the CAD files [m]
+    bell_radius_ratio: float = 0.2   # bell-mouth radius / inlet diameter of the CAD tube
 
     # --- operating point ----------------------------------------------------
     p_inlet: float = 101325.0                  # upstream pressure [Pa]

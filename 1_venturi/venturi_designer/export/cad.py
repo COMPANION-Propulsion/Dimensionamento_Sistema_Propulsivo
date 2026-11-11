@@ -62,13 +62,17 @@ def export_dxf(geom, out_dir: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Profiles, in mm
 # ---------------------------------------------------------------------------
-def bell_radius(D_mm: float, wall_mm: float) -> float:
-    """Radius of the bell mouth at the inlet [mm]."""
-    # TODO(human): choose the sizing rule; it must stay larger than wall_mm
-    return max(0.2 * D_mm, 1.5 * wall_mm)
+BELL_RATIO = 0.2         # default bell-mouth radius / inlet diameter
 
 
-def bell_envelope(R_inlet: float, wall: float) -> Tuple[float, float]:
+def bell_radius(D_mm: float, wall_mm: float, ratio: float = BELL_RATIO) -> float:
+    """Radius of the bell mouth at the inlet [mm]: ratio x diameter, input of the case
+    (VENTURI["raggio_bocca_su_D"]). Never below 1.5 walls, so the outer bell
+    (radius Rb - wall) keeps a real arc."""
+    return max(ratio * D_mm, 1.5 * wall_mm)
+
+
+def bell_envelope(R_inlet: float, wall: float, ratio: float = BELL_RATIO) -> Tuple[float, float]:
     """Room the bell mouth and the two lips take outside the wetted duct.
 
     Returns the largest outer radius of the tube at the inlet and the length
@@ -76,7 +80,7 @@ def bell_envelope(R_inlet: float, wall: float) -> Tuple[float, float]:
     in the units of the arguments. The outer bell is the arc of radius Rb - t
     around the same centre, closed by a half circle of diameter t.
     """
-    Rb = bell_radius(2.0 * R_inlet, wall)
+    Rb = bell_radius(2.0 * R_inlet, wall, ratio)
     a = math.radians(BELL_SWEEP_DEG)
     # the inlet lip is a half circle of radius t/2 around the middle of the
     # bell end, (Rb - t/2) from the bell centre: its top and front stick out t/2
@@ -90,7 +94,8 @@ def wetted_path(geom) -> List[Segment]:
     wall = [Segment(*(p and (p[0] * 1e3, p[1] * 1e3) for p in s))
             for s in geom.wall_segments()]
     R = geom.R_inlet * 1e3
-    Rb = bell_radius(geom.config.D * 1e3, geom.config.wall_thickness * 1e3)
+    Rb = bell_radius(geom.config.D * 1e3, geom.config.wall_thickness * 1e3,
+                     geom.config.bell_radius_ratio)
     a = math.radians(BELL_SWEEP_DEG)
     centre = (0.0, R + Rb)
     start = (-Rb * math.sin(a), centre[1] - Rb * math.cos(a))

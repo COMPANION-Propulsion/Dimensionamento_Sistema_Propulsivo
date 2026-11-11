@@ -63,7 +63,8 @@ def cad_geometry(problem, design) -> MorphedGeometry:
     g = problem.geometry(design)
     config = VenturiConfig(D=2.0 * g.R_inlet, beta=min(g.R_disk / g.R_inlet, 0.999),
                            fluid=case.fluid, p_inlet=case.p_amb, p_throat_target=None,
-                           wall_thickness=case.spessore_parete)
+                           wall_thickness=case.spessore_parete,
+                           bell_radius_ratio=case.raggio_bocca_su_D)
     return MorphedGeometry(problem.layout, design, config)
 
 

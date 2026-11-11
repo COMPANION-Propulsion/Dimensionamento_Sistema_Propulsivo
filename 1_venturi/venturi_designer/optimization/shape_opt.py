@@ -118,7 +118,7 @@ def inlet_radius_limit(case: PropulsionCase) -> float:
     lo, hi = 0.0, case.R_ext
     for _ in range(60):
         mid = 0.5 * (lo + hi)
-        if bell_envelope(mid, case.spessore_parete)[0] <= case.R_ext:
+        if bell_envelope(mid, case.spessore_parete, case.raggio_bocca_su_D)[0] <= case.R_ext:
             lo = mid
         else:
             hi = mid
@@ -139,7 +139,7 @@ def initial_design(case: PropulsionCase, n_up: int = 5, n_down: int = 8):
                          f"disk radius {R_disk*1e3:.1f} mm. Raise D_ext_max or lower "
                          f"spessore_parete / D_disk_min_ratio.")
     L_section = 2.0 * case.L_disk
-    l_env = bell_envelope(R_in, case.spessore_parete)[1]
+    l_env = bell_envelope(R_in, case.spessore_parete, case.raggio_bocca_su_D)[1]
     room = 0.9 * (case.L_max - l_env) - L_section
     if case.L_min is not None:      # start inside [L_min, L_max]
         room = max(room, 0.5 * (case.L_min + case.L_max) - l_env - L_section)
@@ -281,7 +281,7 @@ class DuctProblem:
         dr_up = g.radius_derivative(g.L_up * s)
         dr_down = g.radius_derivative(g.z_b + g.L_down * s)
         bend = np.concatenate((np.diff(c_up, 2), np.diff(c_down, 2))) / c.R_int_max
-        r_env, l_env = bell_envelope(g.R_inlet, c.spessore_parete)
+        r_env, l_env = bell_envelope(g.R_inlet, c.spessore_parete, c.raggio_bocca_su_D)
         return np.concatenate((
             [(c.L_max - g.L_total - l_env) / c.L_max, (c.R_ext - r_env) / c.R_ext],
             [] if c.L_min is None else [(g.L_total + l_env - c.L_min) / c.L_max],
@@ -427,7 +427,7 @@ def report(problem: DuctProblem, d: np.ndarray) -> Dict[str, float]:
     P = power(s, sol.x)
     Q = float(sol.x[-1] * s.s_Q)
     A_e = math.pi * g.R_exit ** 2
-    r_env, l_env = bell_envelope(g.R_inlet, case.spessore_parete)
+    r_env, l_env = bell_envelope(g.R_inlet, case.spessore_parete, case.raggio_bocca_su_D)
     T_forces = momentum_balance(s, sol.x)
     m_dot = case.rho * Q
     return dict(dp_disk=case.dp_disk, thrust=T, thrust_from_forces=T_forces,
