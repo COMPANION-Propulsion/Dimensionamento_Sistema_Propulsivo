@@ -1,8 +1,12 @@
+import json
 import math
+import os
+import tempfile
 import unittest
 
 from ventola_designer.indicatori import (area_naca, confronta, differenza_rumore_dB,
-                                         fattore_squilibrio, indicatori)
+                                         fattore_squilibrio, indicatori, scrivi_confronto,
+                                         tabella_confronto)
 
 RHO = 1240.0
 
@@ -92,6 +96,50 @@ class IndicatoriTests(unittest.TestCase):
 
     def test_ipotesi_presente(self):
         self.assertIn('densita', calcola(run())['ipotesi'])
+
+
+def run_conf(Z, rpm, energia, accettato=True):
+    r = run(rpm=rpm, Z=Z)
+    r['accepted'] = accettato
+    r['energy_J'] = energia
+    r['cases'] = [{'rpm': rpm, 'shaft_power_W': energia, 'torque_Nm': 1e-3}]
+    return r
+
+
+class ConfrontoTests(unittest.TestCase):
+    def report(self, accettati=True):
+        a, b = run_conf(3, 10000.0, 0.5, accettati), run_conf(4, 9000.0, 0.6, accettati)
+        return {'runs': [a, b], 'best': a if accettati else None}
+
+    def test_tabella(self):
+        tab = tabella_confronto(self.report())
+        self.assertEqual(tab['pale'], [3, 4])
+        self.assertEqual(tab['scelta'], 3)
+        self.assertEqual(len(tab['righe']), 16)
+        for riga in tab['righe']:
+            self.assertEqual(len(riga['valori']), 2)
+        self.assertEqual(len(tab['rumore_dB']), 1)
+        self.assertEqual(tab['rumore_dB'][0]['rispetto_a'], 3)
+        self.assertLess(tab['rumore_dB'][0]['diff_dB'], 0)
+
+    def test_nessun_accettato(self):
+        rep = self.report(accettati=False)
+        rep['best'] = run_conf(3, 10000.0, 0.5, False)
+        self.assertIsNone(tabella_confronto(rep))
+
+    def test_scrivi(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            percorso = os.path.join(tmp, 'report.json')
+            with open(percorso, 'w', encoding='utf-8') as f:
+                json.dump(self.report(), f)
+            out = os.path.join(tmp, 'out')
+            os.mkdir(out)
+            tab = scrivi_confronto(percorso, cartella=out)
+            self.assertEqual(tab['pale'], [3, 4])
+            with open(os.path.join(out, 'confronto_pale.json'), encoding='utf-8') as f:
+                self.assertEqual(json.load(f)['scelta'], 3)
+            with open(os.path.join(out, 'CONFRONTO_PALE.md'), encoding='utf-8') as f:
+                self.assertIn('(scelta)', f.read())
 
 
 if __name__ == '__main__':

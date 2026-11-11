@@ -18,6 +18,7 @@ Rumore: solo l'indice di confronto differenza_rumore_dB, da U_punta.
 import argparse
 import json
 import math
+import os
 import sys
 
 import numpy as np
@@ -138,11 +139,96 @@ def _migliori(report, pale=None):
     return dict(sorted(best.items()))
 
 
+def _mm(x):
+    return None if x is None else x * 1e3
+
+
+def tabella_confronto(report, pale=None):
+    """Confronto fra la migliore ventola accettata per ogni numero di pale (None se non ce ne sono)."""
+    best = _migliori(report, pale)
+    if not best:
+        return None
+    zs = list(best)
+    dati = {}
+    for z, run in best.items():
+        c, d = _caso(run), run["design"]
+        dati[z] = (run, c, d, indicatori(d, c))
+    coppia = lambda c: _mm(c.get("torque_Nm"))
+    corda = lambda d: " -> ".join(f"{x * 1e3:.1f}" for x in d["chord_m"]) if d.get("chord_m") else None
+    spess = lambda run: _mm(run.get("geometry_screening", {}).get("min_section_max_thickness_m"))
+    fonti = [("profilo", lambda r, c, d, i: d.get("profile")),
+             ("potenza all'albero [W]", lambda r, c, d, i: c.get("shaft_power_W")),
+             ("giri [rpm]", lambda r, c, d, i: c.get("rpm")),
+             ("coppia [mN m]", lambda r, c, d, i: coppia(c)),
+             ("rendimento del rotore", lambda r, c, d, i: c.get("total_pressure_efficiency")),
+             ("corda radice -> punta [mm]", lambda r, c, d, i: corda(d)),
+             ("spessore minimo [mm]", lambda r, c, d, i: spess(r)),
+             ("Reynolds minimo", lambda r, c, d, i: c.get("Re_min")),
+             ("velocita di punta [m/s]", lambda r, c, d, i: i["velocita_punta_m_s"]),
+             ("passaggio pale [Hz]", lambda r, c, d, i: i["frequenza_passaggio_pale_Hz"]),
+             ("massa di una pala [g]", lambda r, c, d, i: i["massa_pala_g"]),
+             ("sforzo centrifugo alla radice [MPa]", lambda r, c, d, i: i["sforzo_centrifugo_radice_MPa"]),
+             ("squilibrio peggiore [g mm]", lambda r, c, d, i: i["squilibrio_caso_peggiore_g_mm"]),
+             ("forza rotante di squilibrio [N]", lambda r, c, d, i: i["forza_rotante_squilibrio_N"]),
+             ("inerzia delle pale [kg m^2]", lambda r, c, d, i: i["inerzia_pale_kg_m2"]),
+             ("momento angolare [kg m^2/s]", lambda r, c, d, i: i["momento_angolare_pale_kg_m2_s"])]
+    righe = [{"nome": nome, "valori": [f(*dati[z]) for z in zs]} for nome, f in fonti]
+    rumore = [{"pale": z, "rispetto_a": zs[0],
+               "diff_dB": differenza_rumore_dB(dati[zs[0]][3]["velocita_punta_m_s"],
+                                               dati[z][3]["velocita_punta_m_s"])} for z in zs[1:]]
+    return {"pale": zs,
+            "scelta": report["best"]["design"]["blade_count"] if report.get("best") else None,
+            "righe": righe, "rumore_dB": rumore, "ipotesi": IPOTESI,
+            "nota": "Migliore coppia accettata per ogni numero di pale. Solo la ventola scelta "
+                    "passa dal calcolo del sistema (CAD, condotto con la ventola vera)."}
+
+
+def markdown_confronto(tab, titolo="# Confronto per numero di pale"):
+    def cella(x):
+        if x is None:
+            return "-"
+        if isinstance(x, str):
+            return x
+        return f"{x:.0f}" if 1e3 <= abs(x) < 1e7 else f"{x:.4g}"
+
+    zs = tab["pale"]
+    testa = [f"{z} pale" + (" (scelta)" if z == tab["scelta"] else "") for z in zs]
+    lines = [titolo, "", "| | " + " | ".join(testa) + " |", "|---" * (len(zs) + 1) + "|"]
+    lines += [f"| {r['nome']} | " + " | ".join(cella(x) for x in r["valori"]) + " |"
+              for r in tab["righe"]]
+    lines += [""]
+    lines += [f"Indice di rumore {r['pale']} contro {r['rispetto_a']} pale: {r['diff_dB']:+.1f} dB "
+              "(solo confronto, non un livello)." for r in tab["rumore_dB"]]
+    if tab["rumore_dB"]:
+        lines += [""]
+    if len(zs) < 2:
+        lines += ["Un solo numero di pale accettato: nessun confronto possibile.", ""]
+    lines += [tab["nota"], "", "Stime: " + tab["ipotesi"], ""]
+    return lines
+
+
+def scrivi_confronto(report_path, cartella=None):
+    """Scrive confronto_pale.json e CONFRONTO_PALE.md; None (e nessun file) senza progetti accettati."""
+    with open(report_path, encoding="utf-8") as f:
+        report = json.load(f)
+    tab = tabella_confronto(report)
+    if tab is None:
+        return None
+    cartella = cartella or os.path.dirname(os.path.abspath(report_path))
+    with open(os.path.join(cartella, "confronto_pale.json"), "w", encoding="utf-8") as f:
+        json.dump(tab, f, indent=1, ensure_ascii=False)
+    with open(os.path.join(cartella, "CONFRONTO_PALE.md"), "w", encoding="utf-8") as f:
+        f.write("\n".join(markdown_confronto(tab)))
+    return tab
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="python -m ventola_designer.indicatori",
                                  description="Indicatori a posteriori (stime) per numero di pale.")
     ap.add_argument("report")
     ap.add_argument("--pale", type=int, nargs="+")
+    ap.add_argument("--scrivi", action="store_true",
+                    help="scrive confronto_pale.json e CONFRONTO_PALE.md accanto al report")
     args = ap.parse_args(argv)
     with open(args.report, encoding="utf-8") as f:
         report = json.load(f)
@@ -172,6 +258,8 @@ def main(argv=None):
         d = differenza_rumore_dB(ind[zs[0]]["velocita_punta_m_s"], ind[zs[1]]["velocita_punta_m_s"])
         print(f"\nIndice rumore {zs[1]} vs {zs[0]} pale: {d:+.1f} dB (solo confronto, non un livello)")
     print("\nIpotesi:", IPOTESI)
+    if args.scrivi:
+        scrivi_confronto(args.report)
     return 0
 
 

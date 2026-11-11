@@ -12,6 +12,7 @@ Whole chain of the propulsion sizing, from input.py to risultati/<caso>/.
 
     python run_sistema.py                 the whole chain
     python run_sistema.py --solo sistema  one step only (spinta | venturi | ventola | sistema)
+    python run_sistema.py --solo riepilogo   rewrite RIEPILOGO.md only (no calculation)
 
 Each step writes only what is its own: what needs both duct and fan is in 4_sistema/.
 The fan input is written from VENTOLA of input.py into risultati/<caso>/input_ventola.json,
@@ -122,6 +123,14 @@ def run_ventola(input_file: str) -> int:
     if rc != 0:
         return rc
     fan_dir = os.path.join(caso.case_dir(input_file), caso.STEP_DIRS["ventola"])
+    try:                               # best accepted fan per blade count, written next to the report
+        from ventola_designer.indicatori import scrivi_confronto
+        tab = scrivi_confronto(os.path.join(fan_dir, "00_sintesi", "report.json"))
+        if tab is not None:
+            print("Blade-count comparison: "
+                  f"{caso.shown(os.path.join(fan_dir, '00_sintesi', 'CONFRONTO_PALE.md'))}")
+    except (OSError, ValueError, KeyError) as e:
+        print(f"  blade-count comparison skipped: {e}")
     print("\nBoundary layer of rotor and stator sections (XFOIL)")
     try:                               # analysis only: the sizing results stay valid
         from ventola_designer.cp_map import export_cp
@@ -224,6 +233,15 @@ def write_summary(input_file: str) -> None:
                         worst = min(x["separation"]["dorso"]["x_sep"] or 1.0 for x in sec)
                         lines += [f"- strato limite {name} (XFOIL): distacco sul dorso da x/c = "
                                   f"{worst:.2f} nella sezione peggiore"]
+            tab = None
+            try:                       # also for cases computed before the comparison existed
+                from ventola_designer.indicatori import markdown_confronto, scrivi_confronto
+                tab = scrivi_confronto(os.path.join(root, "3_ventola", "00_sintesi", "report.json"))
+            except (OSError, ValueError, KeyError):
+                pass
+            if tab is not None:
+                lines += [""] + markdown_confronto(tab, titolo="### Confronto per numero di pale")
+                lines += ["Dettagli: `3_ventola/00_sintesi/CONFRONTO_PALE.md`."]
         else:
             lines += ["- nessun candidato accettato: vedi `3_ventola/00_sintesi/RISULTATO.md`"]
         lines += [""]
@@ -275,10 +293,14 @@ def write_summary(input_file: str) -> None:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Propulsion sizing chain.")
-    p.add_argument("--solo", choices=STEPS, default=None, help="Run one step only.")
+    p.add_argument("--solo", choices=STEPS + ("riepilogo",), default=None,
+                   help="Run one step only; 'riepilogo' rewrites RIEPILOGO.md without calculating.")
     p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
     args = p.parse_args(argv)
 
+    if args.solo == "riepilogo":
+        write_summary(args.input)
+        return 0
     run = {"spinta": run_spinta, "venturi": run_venturi, "ventola": run_ventola,
            "sistema": run_sistema_step}
     for step in STEPS:

@@ -89,7 +89,7 @@ VENTOLA = {
     "statore": {                             # fixed vanes after the rotor (straighten the flow)
         "presente": True,                    #   False = rotor only, the swirl leaves with the jet
         "pale": None,                        #   vanes, None = first number >= 7 coprime with rotor
-        "solidita": 0.8,                     #   chord x vanes / circumference (0.6-1.5); low Re:
+        "solidita": 0.7,                     #   chord x vanes / circumference (0.6-1.5); low Re:
                                              #   less vane area = less friction
         "profilo": "NACA4412",               #   section of the vanes
         "gioco_assiale_m": 0.002,            #   axial gap rotor -> stator [m]
@@ -110,5 +110,7 @@ VENTOLA = {
     "potenza_max_W": None,                   # end of the power curve, None = 2 x design power
     "jobs": None,                            # pairs profile/blades in parallel, None = auto (at most 4,
                                              #   fewer if memory is low; each process reloads scipy)
-    "sizing": {"minimum_rotor_stall_margin_deg": None},  # None = diagnostica, oppure gradi richiesti
+    "sizing": {"minimum_rotor_stall_margin_deg": None,   # None = diagnostica, oppure gradi richiesti
+               "minimum_section_thickness_m": 0.001},    # thinnest blade section [m]: 1 mm keeps the root
+                                                         #   printable (chord >= 8.3 mm with a 12 % profile)
 }
