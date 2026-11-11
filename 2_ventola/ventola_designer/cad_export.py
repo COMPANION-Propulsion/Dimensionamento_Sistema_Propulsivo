@@ -26,7 +26,14 @@ Gioco di punta: il diametro delle pale nel CAD e D - 2 gioco, perche le pale
 non tocchino il condotto. L'aerodinamica resta calcolata a diametro pieno;
 la perdita di gioco non e modellata (scarto dell'ordine di 2 gioco / D).
 La radice e prolungata dentro il mozzo fino a ROOT_OVERLAP x raggio del mozzo,
-per una fusione netta.
+per una fusione netta. La prima sezione di blade_sections sta esattamente sul
+cilindro del mozzo: se fosse uno spigolo del loft, il mozzo toccherebbe la pala
+lungo uno spigolo (contatto degenere) e la fusione OCCT esce non valida, in
+particolare quando la cucitura del cilindro attraversa l'impronta della pala.
+Percio quella sezione non e uno spigolo: le rette del primo tratto rigato sono
+prolungate dentro il mozzo (stessa superficie, scarto di qualche nm) e il mozzo
+le taglia trasversalmente; in piu la cucitura del cilindro e messa a meta fra
+due pale.
 
 Verso: con la convenzione di geometry.py il bordo d'attacco precede verso -theta
 attorno all'asse e l'aria esce verso valle. Visto da valle (guardando verso
@@ -71,20 +78,61 @@ def _root_section(points, r_from, r_to):
     return out
 
 
-def blade_solid(design, clearance=TIP_CLEARANCE_M):
-    """Una pala, in mm, con la radice prolungata dentro il mozzo."""
+def _blade_geometry(design, clearance):
     cad = deepcopy(design)
     cad['outer_diameter_m'] = design['outer_diameter_m'] - 2*clearance
     if cad['outer_diameter_m'] <= design['hub_diameter_m']:
         raise ValueError('Gioco di punta troppo grande per il raggio della pala.')
-    sections = blade_sections(cad, count=SECTIONS, panels=80)
-    r_hub = design['hub_diameter_m']/2
-    root = _root_section(sections[0]['points'], r_hub, ROOT_OVERLAP*r_hub)
-    stack = [root] + [s['points'] for s in sections]
+    return cad, blade_sections(cad, count=SECTIONS, panels=80), design['hub_diameter_m']/2
+
+
+def _extended_root(sections, r_hub):
+    """Sezione dentro il mozzo sulle rette del primo tratto rigato (sezione 0 -> 1).
+
+    La sezione 0 (sul mozzo) resta sulla superficie ma non e piu uno spigolo:
+    il mozzo taglia la pala trasversalmente, non lungo uno spigolo.
+    """
+    p0, p1 = np.array(sections[0]['points']), np.array(sections[1]['points'])
+    step = float(np.hypot(p1[:, 0], p1[:, 1]).mean()) - r_hub
+    s = min(1.0, 0.5*(1 - ROOT_OVERLAP)*r_hub/step) if step > 0 else 0.0
+    if s <= 0:
+        raise ValueError('Sezioni della pala non crescenti in raggio alla radice.')
+    return (1 + s)*p0 - s*p1
+
+
+def blade_solid(design, clearance=TIP_CLEARANCE_M):
+    """Una pala, in mm, con la radice prolungata dentro il mozzo."""
+    cad, sections, r_hub = _blade_geometry(design, clearance)
+    inner = _extended_root(sections, r_hub)
+    root = _root_section(inner, r_hub, ROOT_OVERLAP*r_hub)
+    stack = [root, inner] + [s['points'] for s in sections[1:]]
     wires = [_section_wire([tuple(1000*v for v in p) for p in pts]) for pts in stack]
     solid = _closed_loft(wires)
     _check_blade(solid, design, cad, r_hub)
     return solid
+
+
+def _hub_seam_deg(design, clearance):
+    """Azimut della cucitura del mozzo a meta fra due pale; errore se le radici si toccano."""
+    _, sections, _ = _blade_geometry(design, clearance)
+    p = np.array(sections[0]['points'])
+    a = np.unwrap(np.arctan2(p[:, 1], p[:, 0]))
+    span = math.degrees(a.max() - a.min())
+    pitch = 360.0/design['blade_count']
+    if span >= pitch:
+        raise ValueError(f'Radici delle pale sovrapposte sul mozzo: ogni pala occupa {span:.1f} gradi '
+                         f'di mozzo contro {pitch:.1f} disponibili (corda o calettamento alla radice '
+                         f'troppo grandi per il mozzo e il numero di pale).')
+    return math.degrees(a.max()) + 0.5*(pitch - span)
+
+
+def _volume(shape):
+    """Volume [mm3] con integrazione accurata (Volume() di cadquery sbaglia sulle B-spline)."""
+    from OCP.BRepGProp import BRepGProp
+    from OCP.GProp import GProp_GProps
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape.wrapped, props, 1e-7, True)
+    return props.Mass()
 
 
 def _check_blade(solid, design, cad, r_hub):
@@ -135,12 +183,14 @@ def rotor_solid(design, clearance=TIP_CLEARANCE_M):
     r_hub = 1000*design['hub_diameter_m']/2
     z0, z1 = bb.zmin - 1000*HUB_MARGIN_M, bb.zmax + 1000*HUB_MARGIN_M
     rotor = cq.Solid.makeCylinder(r_hub, z1 - z0, cq.Vector(0, 0, z0), cq.Vector(0, 0, 1))
+    rotor = rotor.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), _hub_seam_deg(design, clearance))
     n = design['blade_count']
     for k in range(n):
         rotor = rotor.fuse(blade.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), 360.0*k/n))
     rotor = rotor.clean()
-    if not rotor.isValid():
-        raise ValueError('Solido della ventola non valido dopo la fusione.')
+    if not rotor.isValid() or len(rotor.Solids()) != 1:
+        raise ValueError(f'Solido della ventola non valido dopo la fusione '
+                         f'({len(rotor.Solids())} solidi, valido={rotor.isValid()}).')
     return blade, rotor
 
 
@@ -256,13 +306,13 @@ def export_cad(directory, case, design):
         return info
     clearance = float(case.get('cad', {}).get('tip_clearance_m', TIP_CLEARANCE_M))
     blade, rotor = rotor_solid(design, clearance)
+    z_rotor_end = rotor.BoundingBox().zmax
     mirror = rotor.mirror('XZ')          # specchio su un piano che contiene l'asse
     x_mm = fan_position_mm(case)
     blade, rotor, mirror = (to_duct_frame(s, x_mm) for s in (blade, rotor, mirror))
     shapes = [('pala', blade), ('ventola_A', rotor), ('ventola_B_speculare', mirror)]
     stator_info = None
     if (case.get('stator') or {}).get('enabled'):
-        z_rotor_end = rotor_solid(design, clearance)[1].BoundingBox().zmax
         stator, stator_info = stator_solid(case, design, z_rotor_end)
         shapes += [('statore_A', to_duct_frame(stator, x_mm)),
                    ('statore_B_speculare', to_duct_frame(stator.mirror('XZ'), x_mm))]
@@ -276,7 +326,7 @@ def export_cad(directory, case, design):
     for name, shape in shapes:
         shape.exportStep(str(out/f'{name}.step'))
         _stl(shape, out/f'{name}.stl')
-        files[name] = dict(step=f'{name}.step', stl=f'{name}.stl', volume_mm3=shape.Volume(),
+        files[name] = dict(step=f'{name}.step', stl=f'{name}.stl', volume_mm3=_volume(shape),
                            stl_closed=_closed(out/f'{name}.stl'), valid=shape.isValid())
     bb = rotor.BoundingBox()
     info = dict(

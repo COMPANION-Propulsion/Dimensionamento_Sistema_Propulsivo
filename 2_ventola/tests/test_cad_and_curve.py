@@ -43,6 +43,33 @@ class CadAndCurveTests(unittest.TestCase):
             self.assertAlmostEqual(info['diameter_cad_mm'], 100 - 2*0.5)
             self.assertTrue(info['axis'].startswith('X'))
 
+    def test_rotor_fuses_with_steep_root_pitch_on_small_hub(self):
+        # caso TEST_Dati_CAD_Correzione: prima la fusione usciva non valida
+        from ventola_designer import cad_export
+        cq = cad_export.cq
+        if cq is None:
+            self.skipTest('cadquery non installato')
+        design = dict(profile='NACA0012', blade_count=3, outer_diameter_m=0.058074794284476594,
+                      hub_diameter_m=0.017422438285338897, span_nodes=[0.0, 0.5, 1.0],
+                      chord_m=[0.012776454742566851]*3,
+                      pitch_deg=[42.68010142385082, 26.90692761000178, 20.23018105836772])
+        blade, rotor = cad_export.rotor_solid(design)
+        self.assertTrue(rotor.isValid())
+        self.assertEqual(len(rotor.Solids()), 1)
+        # robusto anche con la cucitura del mozzo dentro l'impronta di una pala
+        bb = blade.BoundingBox()
+        hub = cq.Solid.makeCylinder(1000*design['hub_diameter_m']/2, bb.zlen + 2,
+                                    cq.Vector(0, 0, bb.zmin - 1), cq.Vector(0, 0, 1))
+        expected = cad_export._volume(rotor)
+        for seam in (0.0, 30.0):
+            body = hub.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), seam)
+            for k in range(3):
+                body = body.fuse(blade.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), 120.0*k))
+            body = body.clean()
+            self.assertTrue(body.isValid(), seam)
+            self.assertEqual(len(body.Solids()), 1, seam)
+            self.assertAlmostEqual(cad_export._volume(body), expected, delta=1e-4*expected)
+
     def test_operating_point_at_design_speed_is_the_design_point(self):
         d = self._design_point()
         duct = dict(dp=d['axial_total_pressure_rise_Pa'], Q=.03)
