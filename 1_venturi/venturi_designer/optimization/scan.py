@@ -20,8 +20,12 @@ study, export) works on it unchanged. A case is scored by
                         wanted thrust, the dp is set afterwards by the secant)
     with fan curve      thrust at the operating point on the curve (fan_curve.py)
 
-Cases whose diffuser half angle is above the limit, or that leave the size
-limits, are not solved; the wall shear in the diffuser is recorded for each, and
+Cases are not solved if they leave the size limits or if the wall downstream of the
+disk is too steep. The two directions have separate limits: a diverging wall
+(diffuser, may separate) is held to max_half_angle, a converging one (nozzle, no
+separation) to MAX_CONV_HALF_ANGLE, the intake limit of the SLSQP problem. The row
+holds both angles (semiangolo_deg = diverging, semiangolo_conv_deg = converging).
+The wall shear in the diffuser is recorded for each, and
 a case with negative wall shear in the diffuser (separated) is never chosen.
 """
 
@@ -37,7 +41,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from .fan_curve import FanCurve, operating_point
-from .shape_opt import DuctProblem, for_grid, inlet_radius_limit, report
+from .shape_opt import SLOPE_INTAKE, DuctProblem, for_grid, inlet_radius_limit, report
 from ..core.propulsion import PropulsionCase
 from ..export.cad import bell_envelope
 from ..geometry.morph import MorphedGeometry, MorphLayout, fit_design
@@ -48,7 +52,7 @@ N_POINTS = 1500
 def case_shape(case: PropulsionCase, layout: MorphLayout, R_fan: float, R_exit: float,
                L_diff: float, R_in: float) -> Optional[np.ndarray]:
     """Design vector of one case, or None if it does not fit."""
-    l_env = bell_envelope(R_in, case.spessore_parete)[1]
+    l_env = bell_envelope(R_in, case.spessore_parete, case.raggio_bocca_su_D)[1]
     L_sec = layout.L_section
     L_in = max(1.0 * R_fan, (case.L_min or 0.0) - l_env - L_sec - L_diff)
     if L_in + L_sec + L_diff + l_env > case.L_max:
@@ -61,9 +65,18 @@ def case_shape(case: PropulsionCase, layout: MorphLayout, R_fan: float, R_exit: 
     return fit_design(layout, z, R, L_in, L_in + L_sec, R_fan)
 
 
-def half_angle_deg(geom: MorphedGeometry) -> float:
+# A converging exit wall (nozzle) accelerates the flow and does not separate, so it
+# gets the same limit as the intake wall in the SLSQP problem, not the diffuser one.
+MAX_CONV_HALF_ANGLE = math.degrees(math.atan(SLOPE_INTAKE))
+
+
+def half_angles_deg(geom: MorphedGeometry) -> tuple:
+    """(diverging, converging) steepest wall half angles downstream of the disk [deg],
+    both >= 0: the largest positive slope and the largest closing slope."""
     z = np.linspace(geom.z_b, geom.L_total, 400)
-    return float(np.degrees(np.arctan(np.max(np.abs(geom.radius_derivative(z))))))
+    s = geom.radius_derivative(z)
+    return (float(np.degrees(np.arctan(max(np.max(s), 0.0)))),
+            float(np.degrees(np.arctan(max(np.max(-s), 0.0)))))
 
 
 def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[FanCurve],
@@ -79,7 +92,7 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
         raise ValueError(f"D_ventola {2e3*R_fan:.1f} mm is larger than the inlet allows "
                          f"({2e3*R_in:.1f} mm).")
     R_exits = np.linspace(0.92 * R_fan, case.R_int_max, n_D)
-    L_room = case.L_max - bell_envelope(R_in, case.spessore_parete)[1] - layout.L_section - R_fan
+    L_room = case.L_max - bell_envelope(R_in, case.spessore_parete, case.raggio_bocca_su_D)[1] - layout.L_section - R_fan
     L_diffs = np.linspace(0.15, 0.6, n_L) * L_room
     rows: List[Dict] = []
     best = None
@@ -93,9 +106,16 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
                 rows.append(dict(row, stato="fuori ingombro"))
                 continue
             g = MorphedGeometry(layout, d)
-            row["semiangolo_deg"] = half_angle_deg(g)
+            # semiangolo_deg: diverging (diffuser) wall, the one read by export/duct.py;
+            # semiangolo_conv_deg: converging (nozzle) wall
+            row["semiangolo_deg"], row["semiangolo_conv_deg"] = half_angles_deg(g)
             if row["semiangolo_deg"] > max_half_angle + 1e-6:
-                rows.append(dict(row, stato=f"semiangolo > {max_half_angle:g} gradi"))
+                rows.append(dict(row, stato=f"semiangolo divergente {row['semiangolo_deg']:.1f} > "
+                                            f"{max_half_angle:g} gradi (diffusore)"))
+                continue
+            if row["semiangolo_conv_deg"] > MAX_CONV_HALF_ANGLE + 1e-6:
+                rows.append(dict(row, stato=f"semiangolo convergente {row['semiangolo_conv_deg']:.1f} > "
+                                            f"{MAX_CONV_HALF_ANGLE:g} gradi (ugello)"))
                 continue
             problem = DuctProblem(case, layout)
             if prev_sol is not None:
@@ -126,7 +146,7 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
             rows.append(row)
             if verbose:
                 print(f"  D_exit {row['D_uscita_mm']:5.1f} mm, L_diff {row['L_diffusore_mm']:5.1f} mm, "
-                      f"{row['semiangolo_deg']:.2f} deg -> T {row['spinta_N']:.5f} N, dp {row['dp_Pa']:.2f} Pa, "
+                      f"{row['semiangolo_deg']:.2f} deg div / {row['semiangolo_conv_deg']:.2f} deg conv -> T {row['spinta_N']:.5f} N, dp {row['dp_Pa']:.2f} Pa, "
                       f"tau_w min {row['tau_w_min_diffusore_Pa']:+.4f} Pa [{time.time()-t0:.0f} s]"
                       + ("" if row["stato"] == "ok" else f"  -> {row['stato']}"), flush=True)
             if row["stato"] == "ok" and (best is None or row["spinta_N"] > best[0]["spinta_N"]):
