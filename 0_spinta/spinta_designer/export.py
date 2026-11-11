@@ -43,7 +43,9 @@ def export_report(m: Motion, out: str) -> str:
         "## Input", "",
         f"- distanza: {m.distanza:g} m, tempo: {m.tempo:g} s, massa: {m.massa:g} kg",
         f"- profilo: `{m.profilo}`, frazione di crociera: {m.frazione_crociera:g}",
-        f"- ugelli per faccia: {m.n_ugelli}, fattore di margine: {m.fattore_margine:g}", "",
+        f"- ugelli per faccia: {m.n_ugelli}, fattore di margine: {m.fattore_margine:g}",
+        f"- disturbo residuo: {m.disturbo_residuo_g:g} g ({s['accelerazione_disturbo_m_s2']:.4g} m/s²), "
+        f"{100 * s['quota_spinta_disturbo']:.3g}% della spinta serve a vincerlo", "",
         "## Risultato", "",
         "| grandezza | valore |", "|---|---|",
         f"| accelerazione | {s['accelerazione_m_s2']:.6g} m/s² |",
@@ -101,6 +103,7 @@ def export_xlsx(m: Motion, out: str) -> str:
             ("ugelli per faccia", m.n_ugelli, "-"), ("profilo", m.profilo, "-"),
             ("frazione di crociera", m.frazione_crociera, "-"),
             ("fattore di margine", m.fattore_margine, "-"),
+            ("disturbo residuo", m.disturbo_residuo_g, "g"),
             ("accelerazione", s["accelerazione_m_s2"], "m/s²"),
             ("tempo di accelerazione", s["t_accelerazione_s"], "s"),
             ("tempo di crociera", s["t_crociera_s"], "s"),
@@ -113,8 +116,8 @@ def export_xlsx(m: Motion, out: str) -> str:
             cell = ws.cell(row=r, column=c, value=v)
             if isinstance(v, float):
                 cell.number_format = "0.000000"
-    ws.cell(row=14, column=1).font = Font(bold=True)
-    ws.cell(row=14, column=2).font = Font(bold=True)
+    ws.cell(row=15, column=1).font = Font(bold=True)
+    ws.cell(row=15, column=2).font = Font(bold=True)
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 16
 

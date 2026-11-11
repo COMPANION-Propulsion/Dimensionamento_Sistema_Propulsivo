@@ -56,6 +56,22 @@ def test_margin_scales_the_thrust():
     assert b.thrust_nozzle == pytest.approx(1.5 * a.thrust_nozzle)
 
 
+def test_residual_disturbance_adds_to_the_thrust():
+    kw = dict(distanza=0.15, tempo=5.0, massa=4.5, n_ugelli=2, fattore_margine=2.0)
+    m = Motion(disturbo_residuo_g=0.01, **kw)
+    assert m.thrust_total == pytest.approx(2 * 4.5 * (4 * 0.15 / 25 + 0.0980665))
+    assert m.thrust_total == pytest.approx(1.0986, abs=1e-4)
+    assert m.acceleration == pytest.approx(4 * 0.15 / 25)
+    assert m.history()["T_ugello"].max() == pytest.approx(m.thrust_nozzle)
+    # default 0 = free fall, as before
+    assert Motion(**kw).thrust_total == pytest.approx(2 * 4.5 * 4 * 0.15 / 25)
+
+
+def test_negative_disturbance_is_refused():
+    with pytest.raises(ValueError):
+        Motion(distanza=1.0, tempo=10.0, massa=10.0, n_ugelli=2, disturbo_residuo_g=-0.01)
+
+
 @pytest.mark.parametrize("kw", [dict(distanza=0.0), dict(tempo=-1.0), dict(n_ugelli=0),
                                 dict(n_ugelli=1.5), dict(profilo="x"),
                                 dict(profilo="trapezio", frazione_crociera=0.95)])
@@ -88,6 +104,21 @@ def test_named_case_with_other_inputs_is_refused(tmp_path):
     path.write_text(INPUT.format(nome="prova").replace("massa=9.0", "massa=8.0"))
     with pytest.raises(ValueError, match="sovrascrivi"):
         caso.case_dir(str(path), res)
+
+
+def test_overwrite_warns_about_old_steps(tmp_path, capsys):
+    path = tmp_path / "input.py"
+    text = INPUT.format(nome="prova").replace("sovrascrivi=False", "sovrascrivi=True")
+    path.write_text(text)
+    res = str(tmp_path / "risultati")
+    root = caso.case_dir(str(path), res)
+    os.makedirs(os.path.join(root, "2_venturi"))
+    caso.case_dir(str(path), res)
+    assert "WARNING" not in capsys.readouterr().out
+    path.write_text(text.replace("massa=9.0", "massa=8.0"))
+    caso.case_dir(str(path), res)
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "2_venturi" in out and "3_ventola" not in out
 
 
 def test_automatic_names_differ_when_inputs_differ(tmp_path):
