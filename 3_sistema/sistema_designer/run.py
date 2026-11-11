@@ -70,7 +70,7 @@ def run(case_root, p_max=None, verbose=True):
     R = design['outer_diameter_m']/2
     step('curva di potenza', lambda: export_power_curve(case.fan_dir, case.venturi_file, p_max,
                                                         out_dir=case.out))
-    step('potenza nella manovra', lambda: mission_power.export(case))
+    step('potenza nella manovra', lambda: mission_power.export(case, log.get('curva di potenza')))
     step('confronto statore', lambda: stator_compare.export(case))
     rotor, stator = spanwise.rotor_rows(point, design), spanwise.stator_rows(point)
     step('pale lungo il raggio', lambda: [
@@ -106,6 +106,19 @@ def report(case, point, log):
               f"media {m['potenza_media_W']:.3f} W",
               '- potenza all\'albero: quella elettrica è più alta del rendimento di motore e regolatore',
               '- grafico: `01_grafici/potenza_manovra.svg`', '']
+        d = m.get('con_disturbo')
+        if d:
+            L += ['### Manovra e disturbo separati (senza margine)', '',
+                  f"Disturbo residuo {d['disturbo_residuo_g']:g} g contrario al moto: la manovra chiede "
+                  f"{d['spinta_manovra_N']:.3f} N per faccia, il disturbo {d['spinta_disturbo_N']:.3f} N. "
+                  f"Potenza da: {d['modello_potenza']}.", '',
+                  '| fase | tempo [s] | faccia | spinta [N] | potenza all\'albero [W] |', '|---|---|---|---|---|']
+            L += [f"| {p['fase']} | {p['da_s']:.2f} → {p['a_s']:.2f} | {p['faccia']} | {p['spinta_faccia_N']:.3f} | "
+                  f"{p['potenza_faccia_W']:.3f} |" for p in d['fasi']]
+            L += ['', f"- picco {d['picco_W']:.3f} W, energia {d['energia_J']:.2f} J, di cui "
+                      f"{d['energia_del_disturbo_J']:.2f} J per il disturbo ({d['energia_senza_disturbo_J']:.2f} J senza)",
+                  f"- tenere la posizione contro il solo disturbo costa {d['potenza_per_tenere_la_posizione_W']:.3f} W "
+                  'per asse, per tutto il volo libero', '']
     if curve:
         last = curve['righe'][-1]
         L += ['## Curva di potenza', '',

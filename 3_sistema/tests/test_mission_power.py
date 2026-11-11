@@ -33,3 +33,38 @@ def test_coasting_adds_a_phase_with_no_power():
     assert p["tempo_con_motori_accesi_s"] == pytest.approx(4.0)
     assert p["energia_manovra_J"] == pytest.approx(4 * 1.0 * 4.0)
     assert p["potenza_media_W"] == pytest.approx(16.0 / 10.0)
+
+
+def thrust_full(a_d_g, tempo=5.0, d=0.2, m=4.5, n=2, k=2.0):
+    a = 4 * d / tempo ** 2
+    return {"input": {"n_ugelli": n, "tempo": tempo, "distanza": d, "massa": m,
+                      "disturbo_residuo_g": a_d_g},
+            "t_accelerazione_s": tempo / 2, "accelerazione_m_s2": a,
+            "T_ugello_N": k * m * (a + a_d_g * 9.80665) / n}
+
+
+def test_no_disturbance_is_the_design_power_scaled_by_the_margin():
+    # thrust needed = design thrust / 2: power = P* / 2^1.5 on both phases
+    p = profile(thrust_full(0.0), fan(1.0))["con_disturbo"]
+    assert p["energia_del_disturbo_J"] == pytest.approx(0.0)
+    assert p["picco_W"] == pytest.approx(2 * 1.0 / 2 ** 1.5)
+    assert p["energia_J"] == pytest.approx(5.0 * 2 * 1.0 / 2 ** 1.5)
+    assert p["potenza_per_tenere_la_posizione_W"] == 0.0
+
+
+def test_disturbance_larger_than_the_manoeuvre_keeps_the_rear_face_on_while_braking():
+    p = profile(thrust_full(0.01), fan(1.0))["con_disturbo"]
+    assert [x["faccia"] for x in p["fasi"]] == ["posteriore", "posteriore"]
+    assert p["fasi"][0]["spinta_faccia_N"] == pytest.approx(4.5 * (0.032 + 0.0980665))
+    assert p["fasi"][1]["spinta_faccia_N"] == pytest.approx(4.5 * (0.0980665 - 0.032))
+    assert p["energia_del_disturbo_J"] > 0.0
+    assert p["picco_W"] < profile(thrust_full(0.01), fan(1.0))["picco_W"]
+
+
+def test_power_curve_is_used_when_given():
+    curve = {"righe": [{"spinta_ugello_N": 0.0, "potenza_albero_W": 0.0},
+                       {"spinta_ugello_N": 0.3, "potenza_albero_W": 0.9},
+                       {"spinta_ugello_N": 0.6, "potenza_albero_W": 3.0}]}
+    p = profile(thrust_full(0.0), fan(1.0), curve)["con_disturbo"]
+    assert p["modello_potenza"].startswith("curva")
+    assert p["picco_W"] == pytest.approx(2 * 0.9 * (4.5 * 0.032 / 2) / 0.3)
