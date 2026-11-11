@@ -145,7 +145,8 @@ def run_sistema_step(input_file: str) -> int:
         if not json.load(fh).get("best"):
             print("Error: the fan step found no accepted design: nothing to put together.")
             return 2
-    log = run(root, caso.load_input(input_file)["VENTOLA"].get("potenza_max_W"))
+    inputs = caso.load_input(input_file)
+    log = run(root, inputs["VENTOLA"].get("potenza_max_W"), p_cabin=inputs["VENTURI"].get("p_cabina"))
     return 0 if not log.get("errori") else 3
 
 
@@ -260,6 +261,10 @@ def write_summary(input_file: str) -> None:
                   f"| **totale** | **{total:.3f}** | **{total * q:.4f}** |", "",
                   f"Potenza all'albero {c['shaft_power_W']:.4f} W, di cui utile al getto "
                   f"{c['shaft_power_W'] - total * q:.4f} W. Bocca d'imbocco non inclusa.", ""]
+    extra = load("4_sistema", "00_sintesi", "note_e_limiti.json")
+    if extra:
+        from sistema_designer import note
+        lines += note.markdown(extra)
     lines += ["Dettagli: `1_spinta/RISULTATO.md`, `2_venturi/00_sintesi/RISULTATO.md`, "
               "`3_ventola/00_sintesi/RISULTATO.md`, `4_sistema/00_sintesi/RISULTATO.md`.", ""]
     path = os.path.join(root, "RIEPILOGO.md")

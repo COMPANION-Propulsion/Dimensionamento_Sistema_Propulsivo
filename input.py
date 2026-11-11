@@ -10,7 +10,7 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": "TEST_Dati_CAD_Correzione",          # None = name built from the inputs + hash, or a string of your choice
+    "nome": "RUN_POST_FIX_11-11",         # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
@@ -21,7 +21,7 @@ SPINTA = {
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (smallest thrust) or "trapezio"
     "frazione_crociera": 0.0,  # [-] "trapezio" only: share of the time at constant speed, 0..0.9
-    "fattore_margine": 2,    # [-] multiplies the thrust needed
+    "fattore_margine": 2,    # [-] multiplies the thrust needed (margin chosen by the team)
     "disturbo_residuo_g": 0.01,  # [g] residual acceleration of the parabolic flight the thrust must overcome, 0 = free fall
 }
 
@@ -29,7 +29,9 @@ VENTURI = {
     # --- operating point ----------------------------------------------------
     "fluid": "air_20C",        # key of the fluid table (python run_venturi.py --list-fluids)
     "V0": 0.0,                 # flight speed [m/s], 0 = static
-    "p_amb": 101325.0,         # ambient pressure [Pa]
+    "p_amb": 101325.0,         # ambient pressure the duct and the fan are sized at [Pa]
+    "p_cabina": 82500.0,       # [Pa] cabin pressure during the parabolas (rho 0.98 kg/m3 at 20 C): only for the
+                               #     ground / flight comparison in the outputs, None = no comparison
 
     # --- thrust -------------------------------------------------------------
     "T_ugello": None,          # [N] None = from risultati/<caso>/1_spinta/spinta.json
@@ -47,7 +49,7 @@ VENTURI = {
 
     # --- fan (actuator disk): diameter and position are chosen by the optimiser
     "semiangolo_max_deg": 5.0,  # [deg] steepest diffuser wall; keep it at 5 or below: above ~4-5 deg it may separate
-    "L_disk": 0.03,            # [m] axial length of the fan band; straight section = 2 L_disk
+    "L_disk": 0.032,           # [m] axial length of the fan band; straight section = 2 L_disk
                                #     holds rotor + gap + stator,
                                #     must be < L_max / 4
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter
@@ -72,7 +74,7 @@ VENTURI = {
     "turbulence_model": "baldwin_lomax",
     "n_up": 8,                 # free control points of the intake (5-8: more only adds time)
     "n_down": 10,               # free control points of the diffuser (8-10)
-    "grid": "fine",          # "coarse", "medium" or "fine"
+    "grid": "medium",        # "coarse", "medium" or "fine"
     "jobs": 3,                 # grids solved at the same time in the final check (3 grids)
     "max_iter": 60,            # optimiser iterations per grid
     "tol_dp": 0.01,            # [-] the dp loop stops when dp changes less than this
@@ -82,8 +84,8 @@ VENTURI = {
 VENTOLA = {
     # Diameter, dp, flow rate and density come from the venturi of the same case.
     "temperatura_K": 293.15,                 # air temperature, consistent with VENTURI["fluid"]
-    "mozzo_su_D": [0.20, 0.30],              # hub diameter / fan diameter, min and max
-                                             #   (about 8-12 mm: room for shaft and bearings)
+    "mozzo_su_D": [0.38, 0.45],              # hub diameter / fan diameter, min and max: the hub holds
+                                             #   the 1404 motor (18 mm + 2 x 2 mm wall = 22 mm on a ~58 mm fan)
     "statore": {                             # fixed vanes after the rotor (straighten the flow)
         "presente": True,                    #   False = rotor only, the swirl leaves with the jet
         "pale": None,                        #   vanes, None = first number >= 7 coprime with rotor

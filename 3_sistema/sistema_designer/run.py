@@ -17,7 +17,7 @@ import traceback
 from pathlib import Path
 
 from .data import FOLDERS, Case
-from . import assembly, mission_power, spanwise, stator_compare
+from . import assembly, mission_power, note, spanwise, stator_compare
 
 
 def _xlsx(rotor, stator, path):
@@ -42,7 +42,7 @@ def _xlsx(rotor, stator, path):
     wb.save(path)
 
 
-def run(case_root, p_max=None, verbose=True):
+def run(case_root, p_max=None, verbose=True, p_cabin=None):
     case = Case(Path(case_root))
     if case.out.exists():
         shutil.rmtree(case.out)
@@ -85,6 +85,8 @@ def run(case_root, p_max=None, verbose=True):
     step('assieme CAD', lambda: assembly.assembly_cad(case))
     step('viste 3D', lambda: assembly.views(case))
     step('ParaView', lambda: assembly.paraview(case, point))
+    step('note e limiti', lambda: note.export(case, p_cabin, log.get('potenza nella manovra'),
+                                              log.get('condotto con la ventola vera')))
     path = case.folder('00_sintesi')/'RISULTATO.md'
     path.write_text(report(case, point, log), encoding='utf-8')
     return log
@@ -149,6 +151,8 @@ def report(case, point, log):
               f"del disco uniforme ({cpl['scarto_spinta_pct']:+.1f} %), {cpl['celle_flusso_invertito']} celle con "
               f"flusso invertito, sforzo a parete minimo {cpl['tau_parete_min_Pa']:.3f} Pa "
               f"(negativo = separazione). Mappe `01_grafici/condotto_con_ventola_*.svg`.", '']
+    if log.get('note e limiti'):
+        L += note.markdown(log['note e limiti'])
     L += ['## File', '',
           '- `03_cad/assieme_A.step` e `assieme_B.step`: tubo + rotore + statore insieme (mm, asse X)',
           '- `01_grafici/vista_3d_assieme.png`, `vista_assiale_da_valle.png`, `vista_laterale_sezione.png`',

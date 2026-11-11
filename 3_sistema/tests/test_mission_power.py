@@ -38,7 +38,7 @@ def test_coasting_adds_a_phase_with_no_power():
 def thrust_full(a_d_g, tempo=5.0, d=0.2, m=4.5, n=2, k=2.0):
     a = 4 * d / tempo ** 2
     return {"input": {"n_ugelli": n, "tempo": tempo, "distanza": d, "massa": m,
-                      "disturbo_residuo_g": a_d_g},
+                      "disturbo_residuo_g": a_d_g, "fattore_margine": k},
             "t_accelerazione_s": tempo / 2, "accelerazione_m_s2": a,
             "T_ugello_N": k * m * (a + a_d_g * 9.80665) / n}
 
@@ -68,3 +68,27 @@ def test_power_curve_is_used_when_given():
     p = profile(thrust_full(0.0), fan(1.0), curve)["con_disturbo"]
     assert p["modello_potenza"].startswith("curva")
     assert p["picco_W"] == pytest.approx(2 * 0.9 * (4.5 * 0.032 / 2) / 0.3)
+
+
+def test_ground_to_flight_follows_the_fan_laws(tmp_path):
+    import json
+    from sistema_designer.data import Case
+    from sistema_designer import note
+    for sub, name, data in (
+            ("1_spinta", "spinta.json", {**thrust_full(0.01), "T_totale_N": 1.17}),
+            ("2_venturi/00_sintesi", "risultati.json", {"ventola": {"densita_kg_m3": 1.204}}),
+            ("2_venturi/05_convergenza", "design.json", {"case": {"p_amb": 100000.0}}),
+            ("3_ventola/00_sintesi", "report.json",
+             {"best": {"cases": [{"shaft_power_W": 6.0, "rpm": 20000.0, "Re_min": 30000.0}]}})):
+        (tmp_path / sub).mkdir(parents=True)
+        (tmp_path / sub / name).write_text(json.dumps(data), encoding="utf-8")
+    case = Case(tmp_path)
+    out = note.export(case, 81000.0, profile(case.thrust, fan(6.0)), {"scarto_spinta_pct": -8.0})
+    f = out["terra_volo"]
+    assert f["a_giri_di_progetto"]["spinta_ugello_N"] == pytest.approx(0.81 * case.thrust["T_ugello_N"])
+    assert f["a_giri_di_progetto"]["margine_effettivo"] == pytest.approx(2 * 0.81)
+    assert f["a_spinta_di_progetto"]["rpm"] == pytest.approx(20000 / 0.9)
+    assert f["a_spinta_di_progetto"]["potenza_albero_W"] == pytest.approx(6.0 / 0.9)
+    assert len(out["note"]) == 4 and any("3 facce" in x for x in out["note"])
+    assert note.export(case, None)["terra_volo"] is None
+    assert note.markdown(out)[0].startswith("## Dimensionato a terra")
