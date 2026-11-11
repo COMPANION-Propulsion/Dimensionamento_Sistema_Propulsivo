@@ -91,17 +91,27 @@ def seed_designs(case, profile, blades):
     n = len(nodes)
     size = 1+2*n+len(case['operating_points'])
     seed_s = [0.0, 0.35, 0.7, 1.0]
+    # I semi regolari hanno corda 0,13 D e 0,175 D (meta e tre quarti dei limiti storici 0,04-0,22):
+    # valori assoluti, cosi allargare chord_over_D_bounds non li sposta fuori dai vincoli.
+    c_lo, c_hi = cfg['chord_over_D_bounds']
+    regular = [min(max((c-c_lo)/(c_hi-c_lo), 0.), 1.) for c in (.13, .175)]
     for i in range(cfg['seed_samples']):
         x = rng.uniform(.05,.95,size)
         if i<8:
             x[0]=.5
-            x[1:1+n]=.5 if i<4 else .75
+            x[1:1+n]=regular[0] if i<4 else regular[1]
             pattern = [.65,.5,.35,.25] if i<4 else [.5,.4,.3,.2]
             x[1+n:1+2*n]=[interpolate(seed_s, pattern, s) for s in nodes]
             x[1+2*n:]=(.2,.4,.6,.8)[i%4]
         else:
             x[1+n:1+2*n]=np.sort(x[1+n:1+2*n])[::-1]
-        yield decode(case,profile,blades,x)
+        design = decode(case,profile,blades,x)
+        # Corda di ogni nodo entro il 90 % del limite di solidita locale: con limiti di corda larghi
+        # quasi tutti i semi casuali lo violerebbero alla radice e verrebbero scartati.
+        hub, tip = design['hub_diameter_m']/2, design['outer_diameter_m']/2
+        cap = [.9*cfg['max_solidity']*2*math.pi*(hub+s*(tip-hub))/blades for s in nodes]
+        design['chord_m'] = [max(c_lo*2*tip, min(c, k)) for c,k in zip(design['chord_m'], cap)]
+        yield design
 
 
 def optimize_pair(case, profile, blades, maxiter=None):
