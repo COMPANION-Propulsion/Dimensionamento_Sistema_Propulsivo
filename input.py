@@ -22,16 +22,14 @@ SPINTA = {
     "profilo": "bang_bang",    # "bang_bang" (smallest thrust) or "trapezio"
     "frazione_crociera": 0.0,  # [-] "trapezio" only: share of the time at constant speed, 0..0.9
     "fattore_margine": 2,    # [-] multiplies the thrust needed (margin chosen by the team)
-    "disturbo_residuo_g": 0.01,  # [g] residual acceleration of the parabolic flight the thrust must overcome, 0 = free fall
+    "disturbo_residuo_g": 0.02,  # [g] residual acceleration of the parabolic flight the thrust must overcome, 0 = free fall
 }
 
 VENTURI = {
     # --- operating point ----------------------------------------------------
     "fluid": "air_20C",        # key of the fluid table (python run_venturi.py --list-fluids)
     "V0": 0.0,                 # flight speed [m/s], 0 = static
-    "p_amb": 101325.0,         # ambient pressure the duct and the fan are sized at [Pa]
-    "p_cabina": 82500.0,       # [Pa] cabin pressure during the parabolas (rho 0.98 kg/m3 at 20 C): only for the
-                               #     ground / flight comparison in the outputs, None = no comparison
+    "p_amb": 101325.0,         # ambient pressure [Pa]
 
     # --- thrust -------------------------------------------------------------
     "T_ugello": None,          # [N] None = from risultati/<caso>/1_spinta/spinta.json
