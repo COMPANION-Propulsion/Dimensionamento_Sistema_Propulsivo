@@ -108,8 +108,9 @@ def blade_sections(design, count=25, panels=80):
         xyz = []
         for x,y in contour:
             # Asse Z del rotore; quarto di corda come riferimento di calettamento.
-            tangential = c*((x-0.25)*math.cos(beta)-y*math.sin(beta))
-            z = c*((x-0.25)*math.sin(beta)+y*math.cos(beta))
+            # Dorso (y > 0, aspirazione a incidenza positiva) a monte, come assume il BEMT.
+            tangential = c*((x-0.25)*math.cos(beta)+y*math.sin(beta))
+            z = c*((x-0.25)*math.sin(beta)-y*math.cos(beta))
             azimuth = tangential/r
             xyz.append((r*math.cos(azimuth), r*math.sin(azimuth), z))
         result.append({"radius_m": r, "chord_m": c, "pitch_deg": angle, "points": xyz})

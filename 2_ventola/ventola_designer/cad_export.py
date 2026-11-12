@@ -38,6 +38,7 @@ due pale.
 Verso: con la convenzione di geometry.py il bordo d'attacco precede verso -theta
 attorno all'asse e l'aria esce verso valle. Visto da valle (guardando verso
 l'ingresso) A gira in senso orario, B in senso antiorario.
+Il dorso del profilo (lato superiore, in aspirazione) guarda a monte; nello statore il dorso guarda verso -theta.
 """
 import json
 import math

@@ -46,6 +46,18 @@ class GeometryTests(unittest.TestCase):
                 for v,w in zip(pa,pb):
                     self.assertAlmostEqual(2*v,w,places=12)
 
+    def test_dorso_a_monte(self):
+        # Dorso (y > 0) a monte (z minore) e in coda nel verso di rotazione (-theta).
+        case = load_case(CASE)
+        design = initial_design(case, "NACA4412", 4)
+        section = blade_sections(design, panels=80)[2]
+        pts = section["points"]
+        self.assertEqual(len(pts), 161)
+        upper, lower = pts[40], pts[120]
+        self.assertLess(upper[2], lower[2])
+        self.assertGreater(math.atan2(upper[1], upper[0]), math.atan2(lower[1], lower[0]))
+        self.assertLess(pts[80][2], pts[0][2])
+
     def test_invalid_pressure_and_hub_rejected(self):
         original = json.loads(CASE.read_text(encoding="utf-8"))
         for bad in ("pressure", "hub", "boolean", "nan"):

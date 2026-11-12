@@ -149,8 +149,9 @@ def export_cp(report_path, executable, sections=17):
                     beta = math.radians(rec['pitch_deg'])
                     for k, ((x,y), cp) in enumerate(zip(rec['xy'],rec['cp'])):
                         cf_values.append(rec['cf'][k] if rec.get('cf') else 0.0)
-                        t = rec['chord_m']*((x-.25)*math.cos(beta)-y*math.sin(beta))
-                        z = rec['chord_m']*((x-.25)*math.sin(beta)+y*math.cos(beta))
+                        # Dorso (y > 0, aspirazione a incidenza positiva) a monte, come assume il BEMT.
+                        t = rec['chord_m']*((x-.25)*math.cos(beta)+y*math.sin(beta))
+                        z = rec['chord_m']*((x-.25)*math.sin(beta)-y*math.cos(beta))
                         theta = t/rec['radius_m']+2*math.pi*blade/design['blade_count']
                         points.append((rec['radius_m']*math.cos(theta),rec['radius_m']*math.sin(theta),z))
                         values.append(cp)

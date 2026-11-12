@@ -10,14 +10,14 @@ run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_vento
 """
 
 CASO = {
-    "nome": "RUN_POST_FIX_11-11",         # None = name built from the inputs + hash, or a string of your choice
-    "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
+    "nome": "RUN_POST_FIX_11-11-6Kg",         # None = name built from the inputs + hash, or a string of your choice
+    "sovrascrivi": False,  # True = reuse a named folder even if its inputs were different
 }
 
 SPINTA = {
     "distanza": 0.2,         # [m] distance to cover, from rest to rest
     "tempo": 5,             # [s] time available
-    "massa": 4.5,             # [kg] mass of the cube
+    "massa": 6,             # [kg] mass of the cube
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (smallest thrust) or "trapezio"
     "frazione_crociera": 0.0,  # [-] "trapezio" only: share of the time at constant speed, 0..0.9

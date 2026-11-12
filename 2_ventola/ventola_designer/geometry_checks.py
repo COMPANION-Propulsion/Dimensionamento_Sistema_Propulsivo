@@ -38,7 +38,7 @@ def screen_geometry(design, count=65, min_thickness=0., min_gap=0.):
         beta=math.radians(interpolate(nodes,angles,s))
         # Identico sviluppo tangenziale usato da blade_sections, prima dell'avvolgimento.
         co,si=math.cos(beta),math.sin(beta)
-        tangential=[c*((x-.25)*co-y*si) for x,y in contour]
+        tangential=[c*((x-.25)*co+y*si) for x,y in contour]
         gap=2*math.pi*r/b-(max(tangential)-min(tangential))
         thick=c*t
         margins.extend(((gap-min_gap)/d,(thick-min_thickness)/d))
