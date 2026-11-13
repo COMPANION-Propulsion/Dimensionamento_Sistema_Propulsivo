@@ -356,6 +356,14 @@ def run_target_thrust(args) -> int:
                                         max_iter=inputs.get("max_iter", 40),
                                         tol_dp=inputs.get("tol_dp", 0.01), out_dir=alt_dir)
         print("\n" + alternatives_table(alternatives))
+    exit_sweep = None
+    n_exit = int(inputs.get("scansione_uscita", 7) or 0) if extras else 0
+    if n_exit > 0:
+        print(f"\nExit scan, converging to diverging: {n_exit} points around the optimum")
+        exit_sweep = run_exit_sweep(case, layout, design, problem, n_exit, level["optimise"][-1],
+                                    os.path.join(dirs["convergenza"], "uscita"),
+                                    case.semiangolo_max_deg)
+        print("\n" + exit_sweep_table(exit_sweep))
     design_file = save_design(os.path.join(dirs["convergenza"], "design.json"), problem.case,
                               layout, design, report(problem, design))
 

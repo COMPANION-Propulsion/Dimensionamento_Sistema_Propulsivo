@@ -1,73 +1,3 @@
-"""
-Inputs of the whole project (quick guide). The values below are PLACEHOLDERS: replace them.
-
-What the chain does. python run_sistema.py runs, in this order:
-    0_spinta   mission -> thrust per nozzle                      -> 1_spinta/
-    1_venturi  thrust + size limits -> duct, fan dp and diameter -> 2_venturi/
-    2_ventola  dp, diameter, flow -> rotor, stator, rpm, CAD     -> 3_ventola/
-    3_sistema  duct + real fan -> power, power curve, assembly   -> 4_sistema/
-and writes RIEPILOGO.md. venturi and fan are repeated (SISTEMA["iterazioni_fascia"]) until
-VENTURI["L_disk"] fits the real fan. The fan input is written from VENTOLA in input_ventola.json.
-
-Where the results go (risultati/ is never emptied by the code):
-    risultati/<caso>/                  SISTEMA["confronto_statore"] = False: one chain with
-                                       1_spinta/ 2_venturi/ 3_ventola/ 4_sistema/ caso.json
-                                       input_usato.py input_ventola.json fascia.json RIEPILOGO.md
-    risultati/<caso>/Statore/          confronto_statore = True: 1_spinta/ is shared, then the
-    risultati/<caso>/NoStatore/        chain runs twice (each with 2_venturi 3_ventola 4_sistema)
-    risultati/<caso>/5_confronto_statore/   stator yes/no comparison (power, mass, swirl)
-    risultati/<nome>/<etichetta>/      series of cases: every case is a full chain as above;
-    risultati/<nome>/                  the series folder also has RIEPILOGO.md and confronto_casi.xlsx
-<caso> = CASO["nome"], or a name built from SPINTA and VENTURI plus a hash (VENTOLA and SISTEMA
-are not in the hash: changing only the fan reuses the folder).
-
-Sections:
-    CASO      name of the results folder
-    SPINTA    mission: distance, time, mass, nozzles -> thrust per nozzle (0_spinta)
-    VENTURI   size limits, fan band and numerics of the duct -> dp, flow and diameter of the fan
-    VENTOLA   search bounds and stator of the fan, sized for the dp of the venturi (2_ventola)
-    SISTEMA   how the chain is run: stator comparison, band loop, series, mass estimate
-
-Series of cases. Any value of SPINTA, VENTURI, VENTOLA, SISTEMA (also inside nested
-dictionaries, e.g. VENTOLA["statore"]["presente"]) can be a string with several values
-separated by ";":
-
-    "massa": "4; 6"                     numbers, None, True, lists: each part is read with
-    "D_ext_max": "None; 0.07"              ast.literal_eval; what is not a literal stays text
-    "profilo": "bang_bang; trapezio"
-    "statore": {"presente": "True; False"}
-
-Every combination is a complete chain in risultati/<nome>/<etichetta>/ (<etichetta> = e.g.
-massa_4 or massa_4__D_ext_max_0.07). SISTEMA["combinazioni"] = "tutte" runs all the
-combinations of the keys with several values, "accoppiate" pairs the i-th value of each key
-(the lists must have the same length). A string without ";" is a plain value. A failing case
-does not stop the others. SISTEMA["combinazioni"] itself cannot have several values.
-python run_sistema.py --elenca prints the cases and their labels without running anything.
-
-Ready recipes (change the lines in the dictionaries below):
-    quick trial     VENTURI: "grid": "coarse", "alternative_L_tubo": 0 (or 2),
-                    "max_cicli_dp": 2, "max_iter": 30; SISTEMA: "confronto_statore": False,
-                    "iterazioni_fascia": 2; CASO["nome"] = "prova". Much shorter than the full
-                    run; the grid check is on coarser grids, so the error on dp is larger.
-    full run        VENTURI: "grid": "fine", "ottimizzatore": "griglia+forma",
-                    "alternative_L_tubo": 6; SISTEMA: "confronto_statore": True,
-                    "iterazioni_fascia": 3. The venturi step is the longest one.
-    series of mass  SPINTA: "massa": "4; 6; 8"; CASO["nome"] = "serie_masse" (or None); the
-                    rest as in the full run (or the quick trial to look first).
-                    python run_sistema.py --elenca, then python run_sistema.py. The masses of
-                    tube and blades of every case are in risultati/<nome>/confronto_casi.xlsx.
-
-Commands of run_sistema.py (python run_sistema.py --help):
-    python run_sistema.py                  whole chain, every case and variant
-    python run_sistema.py --elenca         list the cases and labels, run nothing
-    python run_sistema.py --solo venturi   one step in every chain (spinta, venturi, ventola,
-                                           sistema), with the last L_disk of fascia.json, no
-                                           band loop
-    python run_sistema.py --solo confronto rewrite 5_confronto_statore/ only, no calculation
-    python run_sistema.py --solo riepilogo rewrite RIEPILOGO.md only, no calculation
-    python run_sistema.py --solo masse     rewrite the mass workbooks only, no calculation
-    python run_sistema.py --input file.py  use another input file instead of input.py
-"""
 
 CASO = {
     # Results folder risultati/<nome>/. With a series (see above) it is the series folder and
@@ -82,7 +12,7 @@ SPINTA = {
     # (unless VENTURI["T_ugello"] is a number).
     "distanza": 0.2,         # [m] distance to cover, from rest to rest
     "tempo": 5,             # [s] time available
-    "massa": "4; 6; 8",             # [kg] mass of the cube
+    "massa": "4; 6",             # [kg] mass of the cube
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (accelerate then brake: smallest thrust) or "trapezio"
                                #   (with a cruise at constant speed: more thrust, lower peak speed)

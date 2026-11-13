@@ -93,7 +93,8 @@ def s_range(case, d_opt: np.ndarray, n: int) -> List[float]:
     s_lo = (FAN_SHARE_MIN * R_disk - R_disk) / A
     s_hi = (case.R_int_max - R_disk) / A
     vals = [1.0] if n <= 1 else [float(v) for v in np.linspace(s_lo, s_hi, int(n))]
-    if not any(abs(v - 1.0) < 1e-9 for v in vals):
+    vals = [1.0 if abs(v - 1.0) < 1e-6 else v for v in vals]   # an end at the optimum is the optimum
+    if not any(v == 1.0 for v in vals):
         vals.append(1.0)
     return sorted(vals)
 
