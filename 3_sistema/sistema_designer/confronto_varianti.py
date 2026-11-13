@@ -61,7 +61,7 @@ def stator_area_mm2(stator):
     return per_vane*stator['vanes']
 
 
-def summarise(folder):
+def summarise(folder, densita_kg_m3=1240.0, riempimento=1.0):
     """Tutte le grandezze di una variante; {'presente': False, 'motivo': ...} se manca."""
     folder = Path(folder)
     if not folder.is_dir():
@@ -105,8 +105,22 @@ def summarise(folder):
     man = _json(folder/'4_sistema'/'00_sintesi'/'potenza_manovra.json') or {}
     last = ok[-1] if ok else {}
     wall = wall_area_m2(folder/'2_venturi'/'03_cad'/'profilo.csv')
+    try:
+        from . import masse
+        mm = masse.masses_of_chain(folder, densita_kg_m3, riempimento)
+        masses = dict(massa_tubo_g=mm['tubo']['massa_g'], massa_rotore_g=mm['rotore']['massa_g'],
+                      massa_statore_g=(mm['statore']['massa_g'] if stator_on else 0.0),
+                      massa_totale_g=mm['totale']['massa_g'], densita_kg_m3=densita_kg_m3,
+                      riempimento=riempimento)
+        if stator_on is False and masses['massa_totale_g'] is not None:
+            masses['massa_totale_g'] -= mm['statore']['massa_g'] or 0.0
+        mass_note = None
+    except Exception as exc:
+        masses = {}
+        mass_note = f'masse non calcolate ({exc})'
     return dict(
-        presente=True, statore=stator_on, note=[swirl_note] if swirl_note else [],
+        presente=True, statore=stator_on, note=[x for x in (swirl_note, mass_note) if x],
+        masse=masses,
         fascia=dict(L_disk_mm=1e3*last['L_disk_m'] if last else 1e3*v['L_ventola_m'],
                     iterazioni=len(ok), convergito=last.get('convergito'),
                     monte_mm=1e3*last['monte_m'] if last else None,
@@ -141,6 +155,10 @@ ROWS = (
     ('fascia e tubo', 'tubo', 'D_ventola_mm', 'diametro ventola', 'mm', 2, None),
     ('fascia e tubo', 'tubo', 'D_uscita_mm', 'diametro di uscita', 'mm', 2, None),
     ('fascia e tubo', 'tubo', 'area_parete_cm2', 'area di parete del tubo', 'cm2', 1, True),
+    ('fascia e tubo', 'masse', 'massa_tubo_g', 'massa del tubo (volume CAD)', 'g', 1, True),
+    ('fascia e tubo', 'masse', 'massa_rotore_g', 'massa del rotore (con mozzo)', 'g', 1, True),
+    ('fascia e tubo', 'masse', 'massa_statore_g', 'massa dello statore', 'g', 1, True),
+    ('fascia e tubo', 'masse', 'massa_totale_g', 'massa totale tubo + rotore + statore', 'g', 1, True),
     ('fascia e tubo', 'tubo', 'pale_statore', 'pale dello statore', '', 0, True),
     ('fascia e tubo', 'tubo', 'area_pale_statore_mm2', 'area delle pale dello statore', 'mm2', 0, True),
     ('venturi', 'venturi', 'dp_assiale_Pa', 'Δp assiale richiesto', 'Pa', 2, True),
@@ -209,6 +227,9 @@ def verdict(table, variants):
     add('manovra.energia_J', 'energia sulla manovra minore', 'energia sulla manovra maggiore', 1e-3)
     add('fascia.L_disk_mm', 'fascia della ventola più corta', 'fascia della ventola più lunga', 0.05)
     add('tubo.L_tubo_mm', 'tubo più corto', 'tubo più lungo', 0.05)
+    add('masse.massa_totale_g', 'senza statore massa totale minore (tubo, rotore, statore)',
+        'senza statore massa totale maggiore', 0.05)
+    add('masse.massa_tubo_g', 'tubo più leggero', 'tubo più pesante', 0.05)
     add('tubo.area_parete_cm2', 'meno area di parete', 'più area di parete', 0.05)
     add('tubo.area_pale_statore_mm2', 'niente pale statore da costruire', 'più area di pale statore', 1.0)
     add('venturi.dp_assiale_Pa', 'Δp assiale richiesto minore', 'Δp assiale richiesto maggiore', 0.05)
@@ -411,12 +432,12 @@ def _markdown(table, variants, pros, cons, files):
     return '\n'.join(L) + '\n'
 
 
-def run(case_root):
+def run(case_root, densita_kg_m3=1240.0, riempimento=1.0):
     """Scrive 5_confronto_statore/ del caso; ritorna la cartella."""
     root = Path(case_root)
     out = root/OUT
     out.mkdir(parents=True, exist_ok=True)
-    variants = {n: summarise(root/n) for n in NAMES}
+    variants = {n: summarise(root/n, densita_kg_m3, riempimento) for n in NAMES}
     table = build_table(variants)
     pros, cons = verdict(table, variants)
     files = _plots(variants, out)

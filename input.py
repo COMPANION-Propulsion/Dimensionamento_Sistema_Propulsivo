@@ -8,10 +8,25 @@ Inputs of the whole project. The values below are PLACEHOLDERS: replace them.
     SISTEMA   how the chain is run: stator yes/no comparison, band iterations (run_sistema.py)
 
 run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_ventola.json.
+
+Series of cases. Any value of SPINTA, VENTURI, VENTOLA, SISTEMA (also inside nested
+dictionaries, e.g. VENTOLA["statore"]["presente"]) can be a string with several values
+separated by ";":
+
+    "massa": "4; 6; 8"                     numbers, None, True, lists: each part is read with
+    "D_ext_max": "None; 0.07"              ast.literal_eval; what is not a literal stays text
+    "profilo": "bang_bang; trapezio"
+    "statore": {"presente": "True; False"}
+
+Every combination is a complete chain in risultati/<nome>/<etichetta>/ (<etichetta> = e.g.
+massa_4 or massa_4__D_ext_max_0.07). SISTEMA["combinazioni"] = "tutte" runs all the
+combinations of the keys with several values, "accoppiate" pairs the i-th value of each key
+(the lists must have the same length). A string without ";" is a plain value.
+python run_sistema.py --elenca prints the cases without running anything.
 """
 
 CASO = {
-    "nome": "Run_20261112_fine_4kg",         # None = name built from the inputs + hash, or a string of your choice
+    "nome": "Run_20261113_fine_4kg-Ottimizzato",         # None = name built from the inputs + hash, or a string of your choice
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
@@ -40,7 +55,7 @@ VENTURI = {
     # --- size of the tube ---------------------------------------------------
     "D_ext_max": 0.07,         # [m] largest OUTER diameter of the tube
     "L_max": 0.160,             # [m] largest overall length, bell mouth included
-    "L_min": 0.10,             # [m] smallest overall length (motor, supports), None = free;
+    "L_min": 0.07,             # [m] smallest overall length (motor, supports), None = free;
                                #     the optimiser stays close to it: shorter = less friction
     "gap_parete": 0.003,       # [m] from the outer edge to the inner duct (wall + margin)
     "spessore_parete": 0.003,  # [m] wall of the CAD tube, at most gap_parete (thick walls
@@ -72,10 +87,10 @@ VENTURI = {
                                  #   "griglia+forma": scan, then adjoint shape optimisation from the
                                  #     best scan case (free length, fan diameter/position, intake, diffuser);
                                  #   "slsqp": adjoint shape optimisation from the default shape (can wander)
-    "alternative_L_tubo": 5,   # only with "griglia+forma": optimum re-solved at fixed tube lengths.
+    "alternative_L_tubo": 6,   # only with "griglia+forma": optimum re-solved at fixed tube lengths.
                                #   int = n lengths equally spaced between L_min and L_max,
                                #   list [m] = explicit lengths, None or 0 = no alternatives
-    "alternative_max_cicli_dp": 2,  # dp loops per alternative (fewer than max_cicli_dp: saves time)
+    "alternative_max_cicli_dp": 3,  # dp loops per alternative (fewer than max_cicli_dp: saves time)
     "D_ventola": None,         # [m] fixed fan diameter for the scan, None = largest the inlet allows
     "scansione_D_uscita": 5,   # exit diameters scanned
     "scansione_L_diffusore": 4,# diffuser lengths scanned
@@ -129,4 +144,8 @@ VENTOLA = {
 SISTEMA = {
     "confronto_statore": True,   # True = chain run twice (Statore/, NoStatore/) + 5_confronto_statore/
     "iterazioni_fascia": 3,      # most venturi+fan passes to fit the band L_disk to the real fan
+    "combinazioni": "tutte",     # series of cases ("4; 6" values): "tutte" = every combination,
+                                 #   "accoppiate" = i-th value of each key with the i-th of the others
+    "densita_kg_m3": 1240.0,     # [kg/m3] material of the tube and the blades (PLA), for the mass estimate
+    "riempimento": 1.0,          # [-] solid share of the print (thin walls = 1.0)
 }

@@ -75,6 +75,15 @@ Riscrittura del solo `RIEPILOGO.md` e del confronto per numero di pale, senza ca
 python run_sistema.py --solo riepilogo
 ```
 
+Serie di casi. Qualsiasi valore di `SPINTA`, `VENTURI`, `VENTOLA`, `SISTEMA` (anche nei dizionari annidati, come `VENTOLA["statore"]["presente"]`) può essere una stringa con più valori separati da `;`, ad esempio `"massa": "4; 6; 8"`, `"D_ext_max": "None; 0.07"`, `"profilo": "bang_bang; trapezio"`. Ogni parte è letta con `ast.literal_eval` (numeri, `None`, `True`, liste) e resta testo se non è un letterale; una stringa senza `;` è un valore normale. `SISTEMA["combinazioni"]` sceglie `"tutte"` (prodotto delle chiavi con più valori, predefinito) o `"accoppiate"` (l'i-esimo valore di ogni chiave con l'i-esimo delle altre; liste di lunghezza diversa danno errore). Ogni caso è una catena completa (con le varianti statore, se attive) in `risultati/<nome>/<etichetta>/`, con `input_usato.py` e `RIEPILOGO.md` propri; l'etichetta è del tipo `massa_4` o `massa_4__D_ext_max_0.07`. `<nome>` è `CASO["nome"]` oppure il nome automatico con le chiavi variabili indicate da `V` e un hash calcolato sull'ingresso con le stringhe originali, quindi stabile. In `risultati/<nome>/` si trovano anche `RIEPILOGO.md` (tabella dei casi con stato) e `confronto_casi.xlsx` (masse e confronto, `sistema_designer.masse`). Un caso che fallisce non ferma gli altri. `SISTEMA["densita_kg_m3"]` (PLA, 1240) e `SISTEMA["riempimento"]` (1.0) servono alla stima della massa di tubo e pale, scritta in un Excel anche per un caso singolo.
+
+```bash
+python run_sistema.py --elenca        # casi ed etichette, senza eseguire nulla
+python run_sistema.py                 # tutta la serie
+python run_sistema.py --solo ventola  # un passo in ogni caso
+python run_sistema.py --solo masse    # riscrive solo gli Excel delle masse
+```
+
 Indicatori a posteriori di una ventola (sforzo centrifugo alla radice, squilibrio, velocità di punta, inerzia), dalla cartella `2_ventola`; `--pale` limita i numeri di pale confrontati e `--scrivi` scrive `confronto_pale.json` e `CONFRONTO_PALE.md` accanto al report:
 
 ```bash

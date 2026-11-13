@@ -37,15 +37,29 @@ spinta.json, so the venturi needs no spinta folder next to it) and stator flag.
 
 --solo venturi | ventola | sistema runs that one step in every chain (no band loop), with the
 L_disk of the last pass of fascia.json (input.py if there is none).
+
+Series of cases. A value of input.py written as a string with ";" ("massa": "4; 6") makes a
+series: every combination (SISTEMA["combinazioni"]: "tutte" or "accoppiate") is a complete chain
+in risultati/<nome>/<etichetta>/ with its own input_usato.py, RIEPILOGO.md and masses; the series
+has RIEPILOGO.md and confronto_casi.xlsx in risultati/<nome>/. A failing case does not stop the
+others. --solo applies to every case; --solo masse rewrites the mass workbooks only; --elenca
+prints the cases and their labels without running anything.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
+import copy
+import hashlib
+import importlib.util
+import itertools
 import json
 import os
+import re
 import shutil
 import sys
+import traceback
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE = os.path.join(ROOT, "input.py")
@@ -53,7 +67,8 @@ for folder in ("0_spinta", "1_venturi", "2_ventola", "3_sistema"):
     sys.path.insert(0, os.path.join(ROOT, folder))
 
 STEPS = ("spinta", "venturi", "ventola", "sistema")
-SOLO = STEPS + ("confronto", "riepilogo")
+SOLO = STEPS + ("confronto", "riepilogo", "masse")
+SECTIONS = ("SPINTA", "VENTURI", "VENTOLA", "SISTEMA")     # sections where "a; b" makes a series
 FAN_DEFAULTS = {
     "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25],
     "statore": {"presente": True, "pale": None, "solidita": 1.0, "profilo": "NACA4412",
@@ -65,26 +80,258 @@ FAN_DEFAULTS = {
     "durata_s": 1.0, "gioco_punta_m": 0.0005, "potenza_max_W": None, "jobs": None, "sizing": {},
     "margine_fascia_m": 0.001, "fascia_min_m": None,     # band loop: read by run_sistema.py only
 }
-SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3}
+SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3, "combinazioni": "tutte",
+                    "densita_kg_m3": 1240.0, "riempimento": 1.0}
+COMBINATIONS = ("tutte", "accoppiate")
 VARIANTS = (("Statore", True), ("NoStatore", False))
 
 
-def run_spinta(input_file: str) -> int:
+def run_spinta(input_file: str, results_dir=None) -> int:
     from spinta_designer import run
-    return run(input_file)
+    return run(input_file, results_dir)
+
+
+def _load_module(input_file: str, name: str = "project_input_raw"):
+    spec = importlib.util.spec_from_file_location(name, input_file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def load_sistema(input_file: str) -> dict:
     """SISTEMA of the input file (defaults for a missing dictionary or key)."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("project_input_sistema", input_file)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_module(input_file, "project_input_sistema")
     given = dict(getattr(module, "SISTEMA", None) or {})
     unknown = sorted(set(given) - set(SISTEMA_DEFAULTS))
     if unknown:
         raise ValueError(f"Unknown keys in SISTEMA: {', '.join(unknown)}.")
     return {**SISTEMA_DEFAULTS, **given}
+
+
+# ---------------------------------------------------------------------------
+# series of cases: "4; 6" in any value of input.py
+# ---------------------------------------------------------------------------
+
+def parse_multi(value):
+    """List of values of a string "a; b; c", None when `value` is not a series.
+
+    Each part goes through ast.literal_eval (numbers, None, True, lists...) and stays a string
+    when that fails. A string without ";" is a plain value.
+    """
+    if not isinstance(value, str) or ";" not in value:
+        return None
+    parts = [p.strip() for p in value.split(";")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError(f"{value!r}: no value between the ';'.")
+    out = []
+    for p in parts:
+        try:
+            out.append(ast.literal_eval(p))
+        except (ValueError, SyntaxError, MemoryError, RecursionError):
+            out.append(p)
+    return out
+
+
+def load_raw(input_file: str) -> dict:
+    """CASO + SECTIONS of the input file as plain dictionaries (the strings left as written)."""
+    module = _load_module(input_file)
+    return {name: copy.deepcopy(dict(getattr(module, name, None) or {}))
+            for name in ("CASO",) + SECTIONS}
+
+
+def find_axes(raw: dict):
+    """[(section, path, values)] of the keys with several values, in file order."""
+    axes = []
+
+    def walk(section, d, path):
+        for key, val in d.items():
+            if isinstance(val, dict):
+                walk(section, val, path + (key,))
+                continue
+            values = parse_multi(val)
+            if values is not None:
+                axes.append((section, path + (key,), values))
+
+    for section in SECTIONS:
+        walk(section, raw.get(section, {}), ())
+    return axes
+
+
+def combine(axes, mode: str):
+    """[[value of each axis]] of every case: "tutte" = product, "accoppiate" = i-th with i-th."""
+    if mode not in COMBINATIONS:
+        raise ValueError(f"SISTEMA['combinazioni'] = {mode!r}: use one of {', '.join(COMBINATIONS)}.")
+    if not axes:
+        return [[]]
+    if mode == "tutte":
+        return [list(c) for c in itertools.product(*[a[2] for a in axes])]
+    sizes = {len(a[2]) for a in axes}
+    if len(sizes) > 1:
+        detail = ", ".join(f"{a[0]}.{'.'.join(a[1])}: {len(a[2])}" for a in axes)
+        raise ValueError("SISTEMA['combinazioni'] = 'accoppiate' needs lists of the same length "
+                         f"({detail}).")
+    return [list(c) for c in zip(*[a[2] for a in axes])]
+
+
+def _safe(text) -> str:
+    s = re.sub(r"[^A-Za-z0-9._+-]+", "-", str(text)).strip("-.")
+    return s or "x"
+
+
+def make_labels(axes, combos):
+    """One folder-safe, unique label per case: massa_4, massa_4__D_ext_max_0.07, statore.presente_False."""
+    names = [".".join(a[1]) for a in axes]
+    names = [f"{a[0].lower()}.{n}" if names.count(n) > 1 else n for a, n in zip(axes, names)]
+    labels, seen = [], {}
+    for combo in combos:
+        label = "__".join(f"{_safe(n)}_{_safe(v)}" for n, v in zip(names, combo)) or "caso"
+        if len(label) > 80:
+            label = label[:70].rstrip("-._") + "_" + hashlib.sha1(label.encode()).hexdigest()[:6]
+        n = seen.get(label.lower(), 0) + 1
+        seen[label.lower()] = n
+        labels.append(label if n == 1 else f"{label}_{n}")
+    return labels
+
+
+class _Multi(float):
+    """Stand-in of a key with several values when the readable part of the name is built."""
+    def __format__(self, spec):
+        return "V"
+
+    __str__ = __repr__ = lambda self: "V"
+
+    def __mul__(self, other):
+        return self
+    __rmul__ = __mul__
+
+
+def series_name(raw: dict, axes, mode: str) -> str:
+    """Name of the series folder: CASO["nome"], else the automatic name of caso.py with the
+    key with several values shown as V, and a hash of the input with the strings as written."""
+    from spinta_designer import caso
+    inputs = {k: copy.deepcopy(raw.get(k, {})) for k in ("CASO", "SPINTA", "VENTURI", "VENTOLA")}
+    if inputs["CASO"].get("nome") is not None:
+        return caso.case_name(inputs)
+    sub = copy.deepcopy(inputs)
+    for section, path, values in axes:
+        if section not in ("SPINTA", "VENTURI"):
+            continue
+        d = sub[section]
+        for k in path[:-1]:
+            d = d[k]
+        numeric = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)
+        d[path[-1]] = _Multi(1.0) if numeric else "V"
+    base = caso.automatic_name(sub).rsplit("_h", 1)[0]
+    payload = json.dumps({"input": caso.input_hash(inputs), "combinazioni": mode,
+                          "assi": [[s, list(p), v] for s, p, v in axes]}, sort_keys=True, default=str)
+    return f"{base}_serie_h{hashlib.sha1(payload.encode('utf-8')).hexdigest()[:7]}"
+
+
+def _override_expr(base: str, path, value) -> str:
+    key = path[0]
+    if len(path) == 1:
+        return f"{{**{base}, {key!r}: {value!r}}}"
+    return f"{{**{base}, {key!r}: {_override_expr(f'{base}.get({key!r}, {{}})', path[1:], value)}}}"
+
+
+def write_case_input(input_file: str, folder: str, label: str, axes, combo) -> str:
+    """folder/input_caso.py: input.py + the override block of the case. Returns its path.
+
+    (The chain copies it to folder/input_usato.py and then writes its own overrides there.)
+    """
+    with open(input_file, encoding="utf-8") as fh:
+        text = fh.read()
+    lines = ["", "", f"# ---- run_sistema.py: values of the case {label} ----",
+             f'CASO = {{**globals().get("CASO", {{}}), "nome": {label!r}}}']
+    for (section, path, _), value in zip(axes, combo):
+        lines.append(f"{section} = {_override_expr(f'globals().get({section!r}, {{}})', path, value)}")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "input_caso.py")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text + "\n".join(lines) + "\n")
+    return path
+
+
+def plan_series(input_file: str, results_dir=None) -> dict:
+    """The series of input_file: name, folder, axes, and the cases (label, folder, assignment)."""
+    from spinta_designer import caso
+    raw = load_raw(input_file)
+    sis = {**SISTEMA_DEFAULTS, **raw.get("SISTEMA", {})}
+    axes = find_axes(raw)
+    for section, path, _ in axes:
+        if section == "SISTEMA" and path[0] == "combinazioni":
+            raise ValueError("SISTEMA['combinazioni'] cannot have several values.")
+    mode = sis["combinazioni"]
+    combos = combine(axes, mode)
+    if not axes:                    # a plain input: the caso.py flow, no series
+        return dict(name=None, root=None, axes=[], mode=mode, cases=[], raw=raw)
+    name = series_name(raw, axes, mode)
+    base = os.path.join(results_dir or caso.RESULTS_DIR, name)
+    labels = make_labels(axes, combos)
+    cases = [dict(label=lab, folder=os.path.join(base, lab), combo=c) for lab, c in zip(labels, combos)]
+    return dict(name=name, root=base, axes=axes, mode=mode, cases=cases, raw=raw)
+
+
+def describe_series(plan: dict) -> list:
+    lines = [f"Series {plan['name']}: {len(plan['cases'])} cases, combinations '{plan['mode']}'",
+             f"Folder: {plan['root']}", "Keys with several values:"]
+    for section, path, values in plan["axes"]:
+        lines.append(f"  {section}.{'.'.join(path)} = {values!r}")
+    for c in plan["cases"]:
+        lines.append(f"  {c['label']}")
+    return lines
+
+
+def write_masses(case_root: str, sis: dict) -> None:
+    """masses.xlsx of one case (sistema_designer.masse); a warning, never an error, if it fails."""
+    try:
+        from sistema_designer.masse import write_mass_summary
+        write_mass_summary(case_root, sis["densita_kg_m3"], sis["riempimento"])
+    except ImportError as e:
+        print(f"WARNING: masses not written (sistema_designer.masse not available: {e}).")
+    except Exception as e:
+        print(f"WARNING: masses of {case_root} not written: {e}")
+
+
+def write_series_masses(plan: dict, rows: list, sis: dict) -> None:
+    """confronto_casi.xlsx of the series from the cases that finished."""
+    done = [(r["label"], r["folder"]) for r in rows if r["rc"] in (0, 3)]
+    if not done:
+        return
+    try:
+        from sistema_designer.masse import write_series_summary
+        path = os.path.join(plan["root"], "confronto_casi.xlsx")
+        write_series_summary([f for _, f in done], path, [l for l, _ in done],
+                             sis["densita_kg_m3"], sis["riempimento"])
+        print(f"Series comparison: {path}")
+    except ImportError as e:
+        print(f"WARNING: confronto_casi.xlsx not written (sistema_designer.masse not available: {e}).")
+    except Exception as e:
+        print(f"WARNING: confronto_casi.xlsx not written: {e}")
+
+
+def status_text(rc) -> str:
+    if rc is None:
+        return "non eseguito"
+    return {0: "ok", 3: "ok con avvisi"}.get(rc, f"errore (codice {rc})")
+
+
+def write_series_summary_md(plan: dict, rows: list) -> str:
+    """RIEPILOGO.md of the series: one row per case."""
+    lines = [f"# Riepilogo della serie `{plan['name']}`", "",
+             f"Combinazioni: `{plan['mode']}`, {len(plan['cases'])} casi.", "",
+             "Chiavi con più valori:", ""]
+    lines += [f"- `{s}.{'.'.join(p)}`: {', '.join(str(x) for x in v)}" for s, p, v in plan["axes"]]
+    lines += ["", "| etichetta | stato | cartella |", "|---|---|---|"]
+    lines += [f"| {r['label']} | {status_text(r['rc'])} | `{r['label']}/` |" for r in rows]
+    lines += ["", "Ogni cartella ha il proprio `RIEPILOGO.md`. Confronto delle masse: "
+              "`confronto_casi.xlsx`.", ""]
+    os.makedirs(plan["root"], exist_ok=True)
+    path = os.path.join(plan["root"], "RIEPILOGO.md")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    return path
 
 
 def run_venturi(input_file: str, output_dir=None, skip_extras: bool = False) -> int:
@@ -380,10 +627,10 @@ def run_chain(input_file: str, case_root: str, folder: str, label, stator, sis: 
     return run_sistema_step(derived, folder)
 
 
-def write_summary(input_file: str) -> None:
+def write_summary(input_file: str, results_dir=None) -> None:
     """RIEPILOGO.md of the case: the key numbers of the four steps on one page."""
     from spinta_designer import caso
-    root = caso.case_dir(input_file)
+    root = caso.case_dir(input_file, results_dir)
     # with the stator comparison the chains live in Statore/ and NoStatore/: the summary
     # follows Statore/ (the design with the stator) and points to the comparison
     sub = "Statore" if (load_sistema(input_file)["confronto_statore"]
@@ -550,39 +797,36 @@ def run_confronto(root: str) -> int:
     return 0
 
 
-def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Propulsion sizing chain.")
-    p.add_argument("--solo", choices=SOLO, default=None,
-                   help="Run one step only (in every chain, no band loop); 'confronto' rewrites "
-                        "5_confronto_statore/ and 'riepilogo' RIEPILOGO.md, both without calculating.")
-    p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
-    args = p.parse_args(argv)
+def run_case(input_file: str, solo=None, results_dir=None) -> int:
+    """One case (a plain input.py, or one case of a series): the whole chain or one step.
 
-    if args.solo == "riepilogo":
-        write_summary(args.input)
-        return 0
+    results_dir = folder that holds the case folder (default risultati/).
+    """
     from spinta_designer import caso
-    try:
-        sis = load_sistema(args.input)
-    except ValueError as e:
-        print(f"Error: {e}")
-        return 1
-    if args.solo == "confronto":
+    if solo == "riepilogo":
+        write_summary(input_file, results_dir)
+        return 0
+    sis = load_sistema(input_file)
+    if solo == "masse":
+        write_masses(caso.case_dir(input_file, results_dir), sis)
+        return 0
+    if solo == "confronto":
         if not sis["confronto_statore"]:
             print("SISTEMA['confronto_statore'] is False: nothing to compare.")
             return 1
-        rc = run_confronto(caso.case_dir(args.input))
-        write_summary(args.input)
+        rc = run_confronto(caso.case_dir(input_file, results_dir))
+        write_summary(input_file, results_dir)
         return rc
+    args = argparse.Namespace(input=input_file, solo=solo)
     if args.solo in (None, "spinta"):
         print("\n" + "#" * 66 + "\n#  SPINTA\n" + "#" * 66)
-        rc = run_spinta(args.input)
+        rc = run_spinta(args.input, results_dir)
         if rc not in (0, 3):
             print(f"\nStep 'spinta' failed (code {rc}): chain stopped.")
-            write_summary(args.input)
+            write_summary(args.input, results_dir)
             return rc
     if args.solo != "spinta":
-        root = caso.case_dir(args.input)
+        root = caso.case_dir(args.input, results_dir)
         results = []
         for label, folder, stator in chains(root, sis):
             print("\n" + "#" * 66 + f"\n#  CHAIN {label or 'CASE'}"
@@ -598,13 +842,83 @@ def main(argv=None) -> int:
         if sis["confronto_statore"] and args.solo is None:
             print("\n" + "#" * 66 + "\n#  CONFRONTO STATORE\n" + "#" * 66)
             run_confronto(root)
-        write_summary(args.input)
+        write_summary(args.input, results_dir)
+        if args.solo in (None, "sistema"):
+            write_masses(root, sis)
         ok = [rc for rc in results if rc in (0, 3)]
         if not ok:
             return results[0] if results else 1
         return 0 if len(ok) == len(results) and 3 not in ok else 3
-    write_summary(args.input)
+    write_summary(args.input, results_dir)
     return 0
+
+
+def run_series(input_file: str, plan: dict, solo=None) -> int:
+    """Every case of the series as a complete chain in plan['root']/<label>/; none stops the others."""
+    rows = []
+    for i, c in enumerate(plan["cases"], 1):
+        print("\n" + "=" * 66 + f"\n=  CASE {i}/{len(plan['cases'])}: {c['label']}\n" + "=" * 66)
+        rc = 1
+        try:
+            case_input = write_case_input(input_file, c["folder"], c["label"], plan["axes"], c["combo"])
+            rc = run_case(case_input, solo, plan["root"])
+        except Exception as e:             # a failing case is recorded, the series goes on
+            print(f"Case {c['label']} failed: {e}")
+            traceback.print_exc()
+            rc = 1
+        if rc not in (0, 3):
+            print(f"\nCase {c['label']} failed (code {rc}).")
+        rows.append(dict(label=c["label"], folder=c["folder"], rc=rc))
+        write_series_summary_md(plan, rows + [dict(label=x["label"], folder=x["folder"], rc=None)
+                                              for x in plan["cases"][i:]])
+    path = write_series_summary_md(plan, rows)
+    if solo in (None, "sistema", "masse"):
+        sis = {**SISTEMA_DEFAULTS, **plan["raw"].get("SISTEMA", {})}
+        first = next((r for r in rows if r["rc"] in (0, 3)), None)
+        if first is not None:       # density and filling of the first finished case (they may vary)
+            sis = load_sistema(os.path.join(first["folder"], "input_caso.py"))
+        write_series_masses(plan, rows, sis)
+    print(f"\nSeries summary: {path}")
+    ok = [r["rc"] for r in rows if r["rc"] in (0, 3)]
+    if not ok:
+        return rows[0]["rc"] if rows else 1
+    return 0 if len(ok) == len(rows) and 3 not in ok else 3
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="Propulsion sizing chain.")
+    p.add_argument("--solo", choices=SOLO, default=None,
+                   help="Run one step only (in every chain and every case, no band loop); "
+                        "'confronto' rewrites 5_confronto_statore/, 'riepilogo' RIEPILOGO.md and "
+                        "'masse' the mass workbooks, all without calculating.")
+    p.add_argument("--elenca", action="store_true",
+                   help="Print the cases of the series (input values 'a; b') and their labels; run nothing.")
+    p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
+    args = p.parse_args(argv)
+
+    try:
+        plan = plan_series(args.input)
+    except (ValueError, KeyError) as e:
+        print(f"Error: {e}")
+        return 1
+    if args.elenca:
+        if plan["axes"]:
+            print("\n".join(describe_series(plan)))
+        else:
+            print("No key with several values: a single case.")
+        return 0
+    if plan["axes"]:
+        sis = {**SISTEMA_DEFAULTS, **plan["raw"].get("SISTEMA", {})}
+        if sis["confronto_statore"] and any(a[1][-2:] == ("statore", "presente") for a in plan["axes"]):
+            print("WARNING: SISTEMA['confronto_statore'] is True: the stator flag of each chain "
+                  "overrides VENTOLA['statore']['presente'] of the series.")
+        print("\n".join(describe_series(plan)))
+        return run_series(args.input, plan, args.solo)
+    try:
+        return run_case(args.input, args.solo)
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
 
 
 if __name__ == "__main__":
