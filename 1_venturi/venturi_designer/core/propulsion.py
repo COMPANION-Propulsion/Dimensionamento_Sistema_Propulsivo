@@ -88,6 +88,7 @@ class PropulsionCase:
     T_target: Optional[float] = None # thrust per nozzle wanted [N]
     P_max: Optional[float] = None    # largest power allowed [W], None = free
     L_min: Optional[float] = None    # smallest overall length of the tube [m], None = free
+    L_target: Optional[float] = None # tube length to hold (+/- a small window) [m], None = free
     semiangolo_max_deg: float = 4.0  # steepest diffuser wall (half angle) [deg]
     mozzo_su_D_disco: float = 0.0    # hub / disk diameter: no dp inside it (see docstring)
     perdita_swirl: float = 0.0       # fraction of dp lost as swirl (see docstring)
@@ -128,6 +129,9 @@ class PropulsionCase:
             raise ValueError(f"The thrust per nozzle must be positive, got {self.T_target}.")
         if self.L_min is not None and not 0.0 < self.L_min < self.L_max:
             raise ValueError(f"L_min ({self.L_min}) must be between 0 and L_max ({self.L_max}).")
+        if self.L_target is not None and not 0.0 < self.L_target <= self.L_max:
+            raise ValueError(f"L_target ({self.L_target}) must be between 0 and L_max "
+                             f"({self.L_max}).")
         if 4.0 * self.L_disk >= self.L_max:
             raise ValueError(f"L_disk ({self.L_disk}) is too long for L_max ({self.L_max}).")
         f = FLUIDS[self.fluid]

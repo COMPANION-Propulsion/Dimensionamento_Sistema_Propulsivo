@@ -29,7 +29,8 @@ from .cad_duct import export_duct_cad, sample, tube_pieces
 from .excel_duct import export_duct_xlsx
 from .fields import duct_fields
 from .paraview import export_paraview_2d
-from .plots_duct import export_duct_plots
+from .plots_duct import (area_ratio_of, export_duct_plots, plot_alternatives, plot_exit_sweep,
+                         plot_history)
 from .tables import export_pointcloud
 
 OUTPUT_DIRS = dict(sintesi="00_sintesi", grafici="01_grafici", excel="02_excel", cad="03_cad",
@@ -173,12 +174,181 @@ def scan_lines(scan):
     return lines + [""]
 
 
+PROFILE_KEYS = ("profilo_z_mm", "profilo_R_mm")
+
+
+def _alternative_summary(alt: Dict) -> Dict:
+    """The alternatives without the wall profiles (results.json is read by the fan script)."""
+    out = {k: v for k, v in alt.items() if k != "casi"}
+    out["casi"] = [{k: v for k, v in row.items() if k not in PROFILE_KEYS} for row in alt["casi"]]
+    return out
+
+
+def _num(v, fmt: str) -> str:
+    return "-" if v is None else format(v, fmt)
+
+
+def alternative_lines(alt):
+    if not alt or not alt.get("casi"):
+        return []
+    ref = alt.get("riferimento", "ottimo")
+    casi = sorted(alt["casi"], key=lambda c: c["L_tubo_mm"] if c.get("L_tubo_mm") is not None
+                  else math.inf)
+    lines = ["## Confronto alternative di lunghezza", "",
+             f"Griglia {alt.get('griglia', '-')}, spinta richiesta {_num(alt.get('T_target_N'), '.5g')} N. "
+             "Confronto relativo sulla stessa griglia di ottimizzazione; studio di griglia, CAD e "
+             "risultati per la ventola solo per l'ottimo; per un'alternativa: `python -m "
+             "venturi_designer.analysis.grid_study --duct 05_convergenza/alternative/<id>/design.json`.",
+             "", "Δp richiesto: Δp della ventola per la spinta voluta, a parità di spinta.", "",
+             "| L tubo [mm] | D ingresso [mm] | D ventola [mm] | D uscita [mm] | "
+             "semiangolo imbocco / diffusore [°] | Δp richiesto [Pa] | Δ Δp [%] | potenza [W] | "
+             "Δ potenza [%] | area parete [cm²] | stato |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for c in casi:
+        star = " ★" if c.get("id") == ref else ""
+        lines.append(
+            f"| {_num(c.get('L_tubo_mm'), '.2f')}{star} | {_num(c.get('D_ingresso_mm'), '.2f')} | "
+            f"{_num(c.get('D_ventola_mm'), '.2f')} | {_num(c.get('D_uscita_mm'), '.2f')} | "
+            f"{_num(c.get('semiangolo_imbocco_deg'), '.2f')} / {_num(c.get('semiangolo_diffusore_deg'), '.2f')} | "
+            f"{_num(c.get('dp_Pa'), '.2f')} | {_num(c.get('delta_dp_pct'), '+.2f')} | "
+            f"{_num(c.get('potenza_W'), '.4f')} | {_num(c.get('delta_potenza_pct'), '+.2f')} | "
+            f"{_num(c.get('area_parete_cm2'), '.2f')} | {str(c.get('stato', '-')).replace('|', '/')} |")
+    lines += ["", "Perdite di pressione totale (Δp = p0 uscita + perdita totale):", "",
+              "| L tubo [mm] | p0 uscita [Pa] | perdita imbocco [Pa] | perdita disco [Pa] | "
+              "perdita valle [Pa] | perdita totale [Pa] | perdita totale [% di Δp] | potenza persa [W] |",
+              "|---|---|---|---|---|---|---|---|"]
+    for c in casi:
+        star = " ★" if c.get("id") == ref else ""
+        lines.append(
+            f"| {_num(c.get('L_tubo_mm'), '.2f')}{star} | {_num(c.get('p0_uscita_Pa'), '.2f')} | "
+            f"{_num(c.get('perdita_imbocco_Pa'), '.3f')} | {_num(c.get('perdita_disco_Pa'), '.3f')} | "
+            f"{_num(c.get('perdita_valle_Pa'), '.3f')} | {_num(c.get('perdita_totale_Pa'), '.3f')} | "
+            f"{_num(c.get('perdita_totale_pct'), '.2f')} | {_num(c.get('potenza_persa_W'), '.4f')} |")
+    return lines + [""]
+
+
+def _sino(v) -> str:
+    return "-" if v is None else ("sì" if v else "no")
+
+
+def _sweep_summary(sw: Dict) -> Dict:
+    """La scansione senza le liste di profilo (results.json è letto dalla ventola)."""
+    out = {k: v for k, v in sw.items() if k != "punti"}
+    out["punti"] = [{k: v for k, v in row.items() if k not in PROFILE_KEYS} for row in sw["punti"]]
+    return out
+
+
+def _sweep_angle(c: Dict):
+    return c.get("semiangolo_convergente_deg") if c.get("tipo") == "convergente" \
+        else c.get("semiangolo_diffusore_deg")
+
+
+def _sweep_verdict(sw: Dict, rows: List[Dict]) -> str:
+    """Una frase: qual è il Δp minimo entro i limiti e perché l'ottimo non va oltre."""
+    ref_id = sw.get("riferimento", "ottimo")
+    ref = next((c for c in rows if c.get("id") == ref_id), None)
+    valid = [c for c in rows if c.get("dp_Pa") is not None and c.get("entro_limite_angolo", True)
+             and not c.get("separato")]
+    if not valid:
+        return "Nessun punto della scansione è entro i limiti d'angolo e non separato."
+    best = min(valid, key=lambda c: c["dp_Pa"])
+    txt = (f"Il Δp minimo fra i punti entro i limiti d'angolo e non separati è al punto "
+           f"s = {best['s']:.2f} (D uscita {_num(best.get('D_uscita_mm'), '.2f')} mm, "
+           f"Δp {best['dp_Pa']:.2f} Pa)")
+    if ref is None:
+        return txt + "."
+    if best.get("id") == ref_id:
+        txt += ", cioè l'ottimo."
+    else:
+        txt += (f", diverso dall'ottimo `{ref_id}` (Δp {_num(ref.get('dp_Pa'), '.2f')} Pa): la "
+                "scansione è campionata, il minimo può stare fra due punti.")
+    more = sorted([c for c in rows if c["s"] > ref["s"]], key=lambda c: c["s"])
+    if not more:
+        dmax = max((c["D_uscita_mm"] for c in rows if c.get("D_uscita_mm") is not None), default=None)
+        if dmax is not None and ref.get("D_uscita_mm") is not None and ref["D_uscita_mm"] >= dmax - 1e-3:
+            why = (f"è già al diametro interno massimo della scansione (D_int_max = {dmax:.2f} mm, "
+                   "ingombro del tubo)")
+        else:
+            why = "non ci sono punti più aperti nella scansione"
+    else:
+        nxt = more[0]
+        where = f"al punto successivo (s = {nxt['s']:.2f}, D uscita {_num(nxt.get('D_uscita_mm'), '.2f')} mm)"
+        if nxt.get("dp_Pa") is None:
+            why = f"oltre, {where}, il solver non converge"
+        elif nxt.get("separato"):
+            why = (f"oltre, {where}, il diffusore separa (τ_w min "
+                   f"{_num(nxt.get('tau_w_min_diffusore_Pa'), '+.4f')} Pa): è il limite")
+        elif not nxt.get("entro_limite_angolo", True):
+            why = (f"oltre, {where}, il semiangolo {_num(_sweep_angle(nxt), '.2f')}° supera il "
+                   f"limite di {_num(sw.get('limite_semiangolo_deg'), '.1f')}°: è il limite d'angolo")
+        else:
+            why = (f"oltre, {where}, il Δp sale a {nxt['dp_Pa']:.2f} Pa: l'ottimo è un minimo interno")
+    return f"{txt} L'ottimo non va oltre: {why}."
+
+
+def exit_sweep_lines(sw: Optional[Dict]) -> List[str]:
+    if not sw or not sw.get("punti"):
+        return []
+    rows = sorted(sw["punti"], key=lambda c: c["s"])
+    ref = sw.get("riferimento", "ottimo")
+    lines = ["## Uscita convergente / divergente", "",
+             f"Scansione dell'apertura del diffusore sull'ottimo, con imbocco, ventola e lunghezza "
+             f"fissi: s = 1 è l'ottimo, s = 0 uscita dritta, s < 0 convergente. Griglia "
+             f"{sw.get('griglia', '-')}, spinta richiesta {_num(sw.get('T_target_N'), '.5g')} N. "
+             f"Limiti: semiangolo divergente {_num(sw.get('limite_semiangolo_deg'), '.1f')}°, "
+             f"convergente {_num(sw.get('limite_convergente_deg'), '.1f')}°, τ_w minimo non negativo.", "",
+             "| s | tipo | D uscita [mm] | A uscita / A ventola [-] | semiangolo [°] | Δp [Pa] | "
+             "Δ Δp [%] | potenza [W] | perdita totale [Pa] | τ_w min [Pa] | entro limiti | "
+             "separato | stato |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for c in rows:
+        star = " ★" if c.get("id") == ref else ""
+        lines.append(
+            f"| {c['s']:+.2f}{star} | {c.get('tipo', '-')} | {_num(c.get('D_uscita_mm'), '.2f')} | "
+            f"{_num(area_ratio_of(c), '.3f')} | {_num(_sweep_angle(c), '.2f')} | "
+            f"{_num(c.get('dp_Pa'), '.2f')} | {_num(c.get('delta_dp_pct'), '+.2f')} | "
+            f"{_num(c.get('potenza_W'), '.4f')} | {_num(c.get('perdita_totale_Pa'), '.3f')} | "
+            f"{_num(c.get('tau_w_min_diffusore_Pa'), '+.4f')} | {_sino(c.get('entro_limite_angolo'))} | "
+            f"{_sino(c.get('separato'))} | {str(c.get('stato', '-')).replace('|', '/')} |")
+    return lines + ["", _sweep_verdict(sw, rows), ""]
+
+
+def history_lines(history: Optional[Dict]) -> List[str]:
+    if not history or not history.get("scelta"):
+        return []
+    passi = history["passi"] if isinstance(history.get("passi"), list) else []
+    n_passi = len(passi) or history.get("n_passi", "-")
+    lines = ["## Come si è arrivati alla scelta", "",
+             f"Percorso dell'ottimizzatore in {n_passi} passi: scansione, ottimizzazione SLSQP, secante "
+             "su Δp. Grafico in `01_grafici/storico_ottimizzazione.svg`, foglio `Storico` in Excel.", "",
+             "| punto | passo | fase | D uscita [mm] | D ventola [mm] | L condotto [mm] | spinta [N] | "
+             "Δp [Pa] |",
+             "|---|---|---|---|---|---|---|---|"]
+    marks = []
+    if passi:
+        marks.append((f"partenza ({passi[0].get('fase', '-')})", passi[0]))
+        cicli = sorted({p.get("ciclo") for p in passi
+                        if p.get("fase") == "ottimizzazione" and p.get("ciclo") is not None})
+        for ciclo in cicli:
+            last = [p for p in passi if p.get("fase") == "ottimizzazione" and p.get("ciclo") == ciclo][-1]
+            marks.append((f"fine ciclo {ciclo} di ottimizzazione", last))
+    marks.append(("**scelta finale**", history["scelta"]))
+    for label, p in marks:
+        lines.append(
+            f"| {label} | {_num(p.get('n'), '.0f')} | {p.get('fase', '-')} | "
+            f"{_num(p.get('D_uscita_mm'), '.2f')} | {_num(p.get('D_ventola_mm'), '.2f')} | "
+            f"{_num(p.get('L_condotto_mm'), '.2f')} | {_num(p.get('spinta_N'), '.5g')} | "
+            f"{_num(p.get('dp_Pa'), '.2f')} |")
+    return lines + [""]
+
+
 _BAND_METHOD = {"GCI": "GCI", "flat": "griglie coincidenti, 1.25 x dispersione",
                 "oscillatory": "risultato oscillante, 1.25 x dispersione",
                 "reference order": "GCI con ordine di riferimento p = 1"}
 
 
-def write_report(results: Dict, path: str) -> str:
+def write_report(results: Dict, path: str, history: Optional[Dict] = None) -> str:
+    """RISULTATO.md. history: lo storico completo (passi); senza, solo la scelta di results."""
     v, s, g, f, n = (results[k] for k in ("ventola", "spinta", "geometria", "flusso", "numerica"))
     pl = results["perdite"]
     warn = []
@@ -242,6 +412,9 @@ def write_report(results: Dict, path: str) -> str:
         f"Potenza persa {pl['potenza_persa_W']:.4f} W su {v['potenza_fluido_W']:.4f} W date "
         f"all'aria. La bocca d'imbocco del CAD è fuori dal dominio di calcolo e non è inclusa.", "",
         *(scan_lines(results.get("scansione"))),
+        *(alternative_lines(results.get("alternative"))),
+        *(exit_sweep_lines(results.get("uscita"))),
+        *(history_lines(history or results.get("storico"))),
         "## Numerica", "",
         f"- griglia del risultato {n['griglia']}, studio di griglia su {n['griglie_studio']}, "
         f"modello `{n['turbolenza']}`",
@@ -251,7 +424,7 @@ def write_report(results: Dict, path: str) -> str:
         *(warn or ["- nessuna"]), "",
         "## Cartelle", "",
         "- `01_grafici/`: geometria, mappe del campo, profili assiali, parete, profili radiali, "
-        "convergenza",
+        "convergenza, alternative, uscita, storico dell'ottimizzazione",
         "- `02_excel/venturi_risultati.xlsx`: tutti i numeri, foglio per argomento",
         "- `03_cad/`: `tubo`, `fluido`, `zona_disco` in STEP e STL (mm, asse x), patch STL del "
         "fluido per la CFD, profilo DXF e CSV",
@@ -309,10 +482,20 @@ def export_duct_results(problem, design, summary: Dict, dirs: Dict[str, str],
     steps = info.get("steps", [])
     files += export_duct_plots(F, tube, design, problem.layout, histories, steps, grid,
                                dirs["grafici"])
+    alt = info.get("alternatives") or None
+    if alt:
+        files += plot_alternatives(alt, dirs["grafici"])
+    sweep = info.get("exit_sweep") or None
+    if sweep:
+        files += plot_exit_sweep(sweep, dirs["grafici"])
+    history = info.get("history") or None
+    if history and history.get("passi"):
+        files += plot_history(history, dirs["grafici"])
 
     print("      Excel")
     files.append(export_duct_xlsx(F, results, design, histories, steps, grid,
-                                  os.path.join(dirs["excel"], "venturi_risultati.xlsx")))
+                                  os.path.join(dirs["excel"], "venturi_risultati.xlsx"),
+                                  alternative=alt, exit_sweep=sweep, history=history))
 
     print("      CFD")
     c = F["cells"]
@@ -324,9 +507,16 @@ def export_duct_results(problem, design, summary: Dict, dirs: Dict[str, str],
 
     if info.get("scan"):
         results["scansione"] = info["scan"]
+    if alt:
+        results["alternative"] = _alternative_summary(alt)
+    if sweep:
+        results["uscita"] = _sweep_summary(sweep)
+    if history and history.get("scelta"):
+        results["storico"] = dict(scelta=history["scelta"], n_passi=len(history.get("passi") or []))
     results = _json_safe(results)
     path = os.path.join(dirs["sintesi"], "risultati.json")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=1, ensure_ascii=False)
-    files += [path, write_report(results, os.path.join(dirs["sintesi"], "RISULTATO.md"))]
+    files += [path, write_report(results, os.path.join(dirs["sintesi"], "RISULTATO.md"),
+                                 history=history)]
     return dict(results=results, files=[f for f in files if f and os.path.isfile(f)])

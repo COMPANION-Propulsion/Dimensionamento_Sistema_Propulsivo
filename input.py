@@ -5,19 +5,20 @@ Inputs of the whole project. The values below are PLACEHOLDERS: replace them.
     SPINTA    mission: distance, time, mass, nozzles -> thrust per nozzle (0_spinta)
     VENTURI   size limits and numerics of the duct -> dp of the fan (1_venturi)
     VENTOLA   search bounds of the fan, sized for the dp of the venturi (2_ventola)
+    SISTEMA   how the chain is run: stator yes/no comparison, band iterations (run_sistema.py)
 
 run_sistema.py writes the fan input from VENTOLA in risultati/<caso>/input_ventola.json.
 """
 
 CASO = {
-    "nome": "RUN_POST_FIX_11-11-6Kg",         # None = name built from the inputs + hash, or a string of your choice
-    "sovrascrivi": False,  # True = reuse a named folder even if its inputs were different
+    "nome": "Run_20261112_fine_4kg",         # None = name built from the inputs + hash, or a string of your choice
+    "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
 
 SPINTA = {
     "distanza": 0.2,         # [m] distance to cover, from rest to rest
     "tempo": 5,             # [s] time available
-    "massa": 6,             # [kg] mass of the cube
+    "massa": 4,             # [kg] mass of the cube
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (smallest thrust) or "trapezio"
     "frazione_crociera": 0.0,  # [-] "trapezio" only: share of the time at constant speed, 0..0.9
@@ -51,7 +52,8 @@ VENTURI = {
     "semiangolo_max_deg": 5.0,  # [deg] steepest diffuser wall; keep it at 5 or below: above ~4-5 deg it may separate
     "L_disk": 0.032,           # [m] axial length of the fan band; straight section = 2 L_disk
                                #     holds rotor + gap + stator,
-                               #     must be < L_max / 4
+                               #     must be < L_max / 4; run_sistema.py takes it as the starting
+                               #     value and adjusts it to the real fan (SISTEMA, VENTOLA margins)
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter
     "P_max": None,             # [W] largest power, None = no limit
 
@@ -66,15 +68,22 @@ VENTURI = {
     "perdita_swirl": 0.0,      # share of dp lost as swirl without stator (0 = off)
 
     # --- optimisation -------------------------------------------------------
-    "ottimizzatore": "griglia",  # "griglia": scan of exit diameter x diffuser length (robust);
-                                 #   "slsqp": adjoint shape optimisation (more free, can wander)
+    "ottimizzatore": "griglia+forma",  # "griglia": scan of exit diameter x diffuser length (robust);
+                                 #   "griglia+forma": scan, then adjoint shape optimisation from the
+                                 #     best scan case (free length, fan diameter/position, intake, diffuser);
+                                 #   "slsqp": adjoint shape optimisation from the default shape (can wander)
+    "alternative_L_tubo": 5,   # only with "griglia+forma": optimum re-solved at fixed tube lengths.
+                               #   int = n lengths equally spaced between L_min and L_max,
+                               #   list [m] = explicit lengths, None or 0 = no alternatives
+    "alternative_max_cicli_dp": 2,  # dp loops per alternative (fewer than max_cicli_dp: saves time)
     "D_ventola": None,         # [m] fixed fan diameter for the scan, None = largest the inlet allows
     "scansione_D_uscita": 5,   # exit diameters scanned
     "scansione_L_diffusore": 4,# diffuser lengths scanned
+    "scansione_uscita": 7,     # points of the converging/diverging exit scan on the optimum, 0 = no scan
     "turbulence_model": "baldwin_lomax",
     "n_up": 8,                 # free control points of the intake (5-8: more only adds time)
     "n_down": 10,               # free control points of the diffuser (8-10)
-    "grid": "medium",        # "coarse", "medium" or "fine"
+    "grid": "fine",        # "coarse", "medium" or "fine"
     "jobs": 3,                 # grids solved at the same time in the final check (3 grids)
     "max_iter": 60,            # optimiser iterations per grid
     "tol_dp": 0.01,            # [-] the dp loop stops when dp changes less than this
@@ -108,9 +117,16 @@ VENTOLA = {
     "durata_s": 1.0,                         # duration of the operating point (scales the energy)
     "gioco_punta_m": 0.0005,                 # tip clearance of the CAD blades to the duct [m]
     "potenza_max_W": None,                   # end of the power curve, None = 2 x design power
+    "margine_fascia_m": 0.001,               # clearance added to the real fan length to set VENTURI["L_disk"] [m]
+    "fascia_min_m": None,                    # smallest L_disk [m] (e.g. motor support 1404), None = none
     "jobs": None,                            # pairs profile/blades in parallel, None = auto (at most 4,
                                              #   fewer if memory is low; each process reloads scipy)
     "sizing": {"minimum_rotor_stall_margin_deg": None,   # None = diagnostica, oppure gradi richiesti
                "minimum_section_thickness_m": 0.001},    # thinnest blade section [m]: 1 mm keeps the root
                                                          #   printable (chord >= 8.3 mm with a 12 % profile)
+}
+
+SISTEMA = {
+    "confronto_statore": True,   # True = chain run twice (Statore/, NoStatore/) + 5_confronto_statore/
+    "iterazioni_fascia": 3,      # most venturi+fan passes to fit the band L_disk to the real fan
 }

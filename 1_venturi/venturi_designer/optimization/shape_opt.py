@@ -59,7 +59,8 @@ KS_RHO = 40.0          # sharpness of the smooth minimum
 MARGIN_NAMES = {"separation": "margine_separazione", "mach": "margine_mach",
                 "cavitation": "margine_cavitazione", "power": "margine_potenza"}
 THROAT_RAMP = 1.5      # cell-size ramp, fixed so the grid moves smoothly
-N_SLOPE_SAMPLES = 24   # slope checks along each spline
+N_SLOPE_SAMPLES = 64   # slope checks along each spline
+L_WINDOW = 0.0005      # half width of the tube length window around L_target [m]
 STEP_RADIUS = 1e-6     # finite-difference step on a control point [m]
 STEP_LENGTH = 1e-5     # finite-difference step on a length [m]
 DISK_START = 0.8       # starting disk radius / R_int_max
@@ -285,6 +286,9 @@ class DuctProblem:
         return np.concatenate((
             [(c.L_max - g.L_total - l_env) / c.L_max, (c.R_ext - r_env) / c.R_ext],
             [] if c.L_min is None else [(g.L_total + l_env - c.L_min) / c.L_max],
+            [] if c.L_target is None else
+            [(c.L_target + L_WINDOW - g.L_total - l_env) / c.L_max,
+             (g.L_total + l_env - (c.L_target - L_WINDOW)) / c.L_max],
             (np.r_[up, down] - R_disk) / c.R_int_max,
             # monotone walls: the intake only narrows towards the fan, the diffuser
             # only widens. A monotone control polygon gives a monotone B-spline, so

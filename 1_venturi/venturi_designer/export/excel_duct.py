@@ -12,6 +12,9 @@ venturi_risultati.xlsx of an optimised duct. Sheets:
     Ottimizzazione SLSQP history, every grid and cycle
     Iterazioni_dp  dp loop
     Griglia        grid study and error band
+    Alternative    fixed-length alternatives, one row per case (only if there are any)
+    Uscita         exit sweep (diffuser opening), one row per point, with the limits
+    Storico        optimiser path, one row per step, the final choice marked
 
 Lengths in mm, pressures in Pa relative to p_amb.
 """
@@ -65,8 +68,67 @@ def _chart(ws, title: str, x_col: int, y_cols: Sequence[int], n: int, anchor: st
     ws.add_chart(ch, anchor)
 
 
+def _alternative_sheet(wb, alternative: Dict) -> None:
+    """Foglio Alternative: every scalar key as a column, one row per case, plus a blank column
+    for the mass the user fills in."""
+    casi = alternative.get("casi") or []
+    if not casi:
+        return
+    keys: List[str] = []
+    for row in casi:
+        for k in row:
+            if k not in keys:
+                keys.append(k)
+    skip = {"profilo_z_mm", "profilo_R_mm"}
+    keys = [k for k in keys if k not in skip
+            and not any(isinstance(row.get(k), (list, tuple, dict)) for row in casi)]
+    wa = wb.create_sheet("Alternative")
+    _table(wa, [*keys, "massa [g] (da compilare)"],
+           ([row.get(k) for k in keys] + [None] for row in casi))
+
+
+def _scalar_sheet(wb, name: str, rows: List[dict], skip=("profilo_z_mm", "profilo_R_mm")):
+    """Foglio con una colonna per ogni chiave scalare e una riga per caso."""
+    keys: List[str] = []
+    for row in rows:
+        for k in row:
+            if k not in keys and k not in skip:
+                keys.append(k)
+    keys = [k for k in keys if not any(isinstance(row.get(k), (list, tuple, dict)) for row in rows)]
+    ws = wb.create_sheet(name)
+    last = _table(ws, keys, ([row.get(k) for k in keys] for row in rows))
+    return ws, last
+
+
+def _exit_sheet(wb, sweep: Dict) -> None:
+    """Foglio Uscita: la scansione dell'apertura del diffusore, una riga per punto, più i limiti."""
+    ws, last = _scalar_sheet(wb, "Uscita", sweep.get("punti") or [])
+    info = [("riferimento (ottimo)", sweep.get("riferimento")), ("griglia", sweep.get("griglia")),
+            ("spinta richiesta [N]", sweep.get("T_target_N")),
+            ("limite semiangolo divergente [°]", sweep.get("limite_semiangolo_deg")),
+            ("limite semiangolo convergente [°]", sweep.get("limite_convergente_deg"))]
+    for i, (k, v) in enumerate(info):
+        ws.cell(row=last + 2 + i, column=1, value=k).font = Font(bold=True)
+        ws.cell(row=last + 2 + i, column=2, value=v)
+
+
+HISTORY_KEYS = ["n", "fase", "ciclo", "griglia", "iterazione", "D_uscita_mm", "D_ventola_mm",
+                "L_condotto_mm", "spinta_N", "dp_Pa", "violazione"]
+
+
+def _history_sheet(wb, history: Dict) -> None:
+    """Foglio Storico: un passo per riga, con la scelta finale marcata."""
+    scelta = (history.get("scelta") or {}).get("n")
+    ws = wb.create_sheet("Storico")
+    rows = [[p.get(k) for k in HISTORY_KEYS] + ["★ scelta" if p.get("n") == scelta else ""]
+            for p in history.get("passi") or []]
+    _table(ws, [*HISTORY_KEYS, "scelta"], rows)
+
+
 def export_duct_xlsx(F: Dict, results: Dict, design: np.ndarray, histories: Dict[str, List[dict]],
-                     steps: List[dict], grid: Optional[dict], path: str) -> str:
+                     steps: List[dict], grid: Optional[dict], path: str,
+                     alternative: Optional[Dict] = None, exit_sweep: Optional[Dict] = None,
+                     history: Optional[Dict] = None) -> str:
     geom, case = F["geom"], F["case"]
     wb = Workbook()
 
@@ -189,6 +251,12 @@ def export_duct_xlsx(F: Dict, results: Dict, design: np.ndarray, histories: Dict
         for i, (k, v) in enumerate(info):
             wq.cell(row=last + 2 + i, column=1, value=k).font = Font(bold=True)
             wq.cell(row=last + 2 + i, column=2, value=v)
+    if alternative:
+        _alternative_sheet(wb, alternative)
+    if exit_sweep and exit_sweep.get("punti"):
+        _exit_sheet(wb, exit_sweep)
+    if history and history.get("passi"):
+        _history_sheet(wb, history)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     wb.save(path)
     return path

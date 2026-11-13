@@ -32,6 +32,8 @@ from .geometry import create_venturi_geometry
 from .optimization.shape_opt import DuctProblem, for_grid, initial_design, report
 from .optimization.sizing import run_optimization
 from .optimization.fan_curve import FanCurve, operating_point
+from .optimization.alternatives import alternatives_table, lengths_from_input, run_alternatives
+from .optimization.exit_sweep import exit_sweep_table, optimisation_history, run_exit_sweep
 from .optimization.scan import plot_scan, run_scan
 from .optimization.target_thrust import (SizingResult, initial_dp, match_thrust, save_design,
                                          size_for_thrust)
@@ -55,6 +57,7 @@ caso = _load_caso()
 RESULTS_DIR = caso.RESULTS_DIR
 INPUT_FILE = caso.INPUT_FILE
 REQUIRED_INPUTS = ("fluid", "V0", "p_amb", "D_ext_max", "L_max", "L_disk", "grid")
+OPTIMISERS = ("griglia", "griglia+forma", "slsqp")
 
 EPILOG = """\
 examples:
@@ -220,6 +223,9 @@ def load_inputs(path: str) -> dict:
         raise ValueError(f"Missing in {path}: {', '.join(missing)}.")
     if inputs["grid"] not in GRID_LEVELS:
         raise ValueError(f"grid must be one of {', '.join(GRID_LEVELS)}, got '{inputs['grid']}'.")
+    mode = inputs.get("ottimizzatore", "griglia")
+    if mode not in OPTIMISERS:
+        raise ValueError(f"ottimizzatore must be one of {', '.join(OPTIMISERS)}, got '{mode}'.")
     return inputs
 
 
@@ -250,8 +256,9 @@ def load_case(path: str, T_target: Optional[float] = None):
     return case, inputs
 
 
-def scan_sizing(case, layout, inputs, level, curve, T, dirs):
-    """Grid scan of the duct (scan.py), then the dp for the thrust when there is no curve."""
+def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True):
+    """Grid scan of the duct (scan.py), then the dp for the thrust when there is no curve
+    (match=False: the scan only, the shape optimisation follows)."""
     grid = level["optimise"][-1]
     _, d0 = initial_design(case, inputs.get("n_up", 5), inputs.get("n_down", 8))
     case = replace(case, dp_disk=initial_dp(case, layout, d0))
@@ -272,7 +279,7 @@ def scan_sizing(case, layout, inputs, level, curve, T, dirs):
     steps = [dict(ciclo=1, tipo="scansione", griglia=scan["griglia"], dp_disk=b["dp_Pa"],
                   spinta=b["spinta_N"])]
     exponent = 1.0
-    if curve is None:
+    if curve is None and match:
         print(" Secant on dp for the wanted thrust")
         problem, rows, exponent = match_thrust(problem, design, T, cycle=1)
         steps += rows
@@ -295,7 +302,8 @@ def run_target_thrust(args) -> int:
     dirs = output_dirs(root)
     level = GRID_LEVELS[inputs["grid"]]
     print(f"Thrust per nozzle {T:.5g} N (from {source})")
-    scan_mode = inputs.get("ottimizzatore", "griglia") == "griglia"
+    mode = inputs.get("ottimizzatore", "griglia")
+    scan_mode = mode in ("griglia", "griglia+forma")
     print(f"Tube within D {case.D_ext_max * 1e3:.1f} mm x L {case.L_max * 1e3:.1f} mm, inner duct "
           f"up to D {2e3 * case.R_int_max:.1f} mm, "
           + ("scan variables: exit diameter x diffuser length" if scan_mode
@@ -307,8 +315,20 @@ def run_target_thrust(args) -> int:
         if curve is not None:
             print("Fan curve " + ("(FICTITIOUS EXAMPLE)" if curve.fictitious else "")
                   + f": {len(curve.Q)} points, operating point on the curve")
-        if inputs.get("ottimizzatore", "griglia") == "griglia":
+        if mode == "griglia":
             res, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs)
+        elif mode == "griglia+forma":
+            if curve is not None:
+                raise ValueError("the fan curve works with ottimizzatore = 'griglia' only "
+                                 "(the shape optimisation does not support it).")
+            res0, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs, match=False)
+            print("\nShape optimisation from the scan design")
+            res = size_for_thrust(case, layout, res0.design, level["optimise"],
+                                  max_iter=inputs.get("max_iter", 40),
+                                  tol_dp=inputs.get("tol_dp", 0.01),
+                                  max_cycles=inputs.get("max_cicli_dp", 4),
+                                  out_dir=dirs["convergenza"])
+            res.steps = res0.steps + res.steps
         else:
             if curve is not None:
                 raise ValueError("the fan curve works with ottimizzatore = 'griglia' only.")
@@ -322,6 +342,20 @@ def run_target_thrust(args) -> int:
         print(f"Error: {e}")
         return 2
     design, problem = res.design, res.problem
+    alternatives = None
+    skip_extras = bool(getattr(args, "skip_extras", False))
+    extras = mode == "griglia+forma" and not skip_extras
+    lengths = lengths_from_input(inputs.get("alternative_L_tubo"), case) if extras else []
+    if lengths:
+        print(f"\nAlternatives at fixed tube length: {', '.join(f'{1e3 * L:.1f}' for L in lengths)} mm")
+        alt_dir = os.path.join(dirs["convergenza"], "alternative")
+        os.makedirs(alt_dir, exist_ok=True)
+        alternatives = run_alternatives(case, layout, design, problem, lengths,
+                                        level["optimise"][-1],
+                                        max_cycles=inputs.get("alternative_max_cicli_dp", 2),
+                                        max_iter=inputs.get("max_iter", 40),
+                                        tol_dp=inputs.get("tol_dp", 0.01), out_dir=alt_dir)
+        print("\n" + alternatives_table(alternatives))
     design_file = save_design(os.path.join(dirs["convergenza"], "design.json"), problem.case,
                               layout, design, report(problem, design))
 
@@ -357,6 +391,11 @@ def run_target_thrust(args) -> int:
     steps += rows
     with open(os.path.join(dirs["convergenza"], "iterazioni_dp.json"), "w", encoding="utf-8") as fh:
         json.dump(steps, fh, indent=1)
+    history = None
+    try:
+        history = optimisation_history(dirs["convergenza"], scan, case)
+    except Exception as e:                      # the path of the optimiser is a nicety
+        print(f"Warning: optimiser history not written ({e})")
     summary = report(fine, design)
     save_design(design_file, fine.case, layout, design, summary)
     dp_error = fine.case.dp_disk * est["error_pct"] / 100.0 / k
@@ -364,7 +403,8 @@ def run_target_thrust(args) -> int:
     print("\nFiles")
     out = export_duct_results(fine, design, summary, dirs, dict(
         source=source, estimate=est, dp_error=dp_error, exponent=k, steps=steps,
-        converged=res.converged, scan=scan, curve=curve.to_dict() if curve else None))
+        converged=res.converged, scan=scan, curve=curve.to_dict() if curve else None,
+        alternatives=alternatives, exit_sweep=exit_sweep, history=history))
     if scan:
         plot_scan(scan, os.path.join(dirs["grafici"], "scansione.svg"))
     r = out["results"]
