@@ -1,55 +1,47 @@
 """
-Cartella CAD chiara, per chi apre i file in SolidWorks (o in un altro CAD) senza conoscere la catena.
+CAD per SolidWorks (e altri CAD) nelle cartelle degli step: nessuna cartella CAD nella radice.
 
-    <caso>/CAD/<variante>/        con le varianti Statore / NoStatore
-    <caso>/CAD/                   senza varianti
-        01_tubo.step              condotto (solido)
-        02_rotore.step            mozzo + pale
-        03_statore.step           pale fisse (solo con statore)
-        04_assieme.step           tubo + rotore + statore
-        speculari/                le stesse parti nella versione B (ugello che gira al contrario)
-        stl/                      mesh STL di tutto
-        solidworks/               versione per SolidWorks: parti nominate, AP214 e AP203, IGES
-        LEGGIMI.txt               cosa e ogni file, unita, asse, quale aprire e, se manca qualcosa, perche
-    <serie>/CAD/INDICE.txt        indice dei casi della serie
+I file CAD di ogni catena stanno solo nelle cartelle 03_cad dei rispettivi step:
 
-I file di calcolo restano dove sono (2_venturi/03_cad, 3_ventola/03_cad, 4_sistema/03_cad: li
-leggono masse.py, fascia.py, assembly.py e la Dinamica): qui ci sono COPIE con nomi chiari.
-Nessun calcolo: si legge cio che c'e. Una variante incompleta viene costruita lo stesso, con
-i file che esistono, e il LEGGIMI.txt dice quali mancano e perche (fascia.json, report.json).
+    2_venturi/03_cad/    tubo.step/.stl (condotto), fluido*.step/.stl, profilo.dxf/csv
+    3_ventola/03_cad/    ventola_A / ventola_B_speculare, statore_A / statore_B_speculare,
+                         pala.step, CAD_info.json
+    4_sistema/03_cad/    assieme_A / assieme_B (tubo + rotore + statore)
 
-    build_chain(case_root, variant, chain_root)   copia + LEGGIMI.txt di una catena
-    build_case(case_root)                         tutte le catene del caso + LEGGIMI.txt del caso
-    write_series_index(series_root, case_roots)   <serie>/CAD/INDICE.txt
-    rebuild(path)                                 serie, caso o catena gia calcolati
+Qui si aggiunge, dentro ognuna, la sottocartella solidworks/ (parti con nome, STEP AP214 e AP203,
+IGES; le versioni B in solidworks/speculari/) e un LEGGIMI.txt breve in italiano:
+
+    tubo               -> 2_venturi/03_cad/solidworks/
+    rotore, statore    -> 3_ventola/03_cad/solidworks/
+    assieme            -> 4_sistema/03_cad/solidworks/
+
+Nessun calcolo: si legge cio che c'e (la versione SolidWorks si ricostruisce dai risultati
+esistenti, vedi ventola_designer/cad_solidworks.py). Le informazioni su una variante incompleta
+(cosa manca e perche) le scrive RIEPILOGO.md del caso, che usa chain_state.
+
+    chain_state(chain_root, variant)         stato del CAD di una catena (solo lettura)
+    build_chain(chain_root, variant)         solidworks/ + LEGGIMI.txt dei tre step di una catena
+    build_case(case_root)                    tutte le catene del caso
+    rebuild(path)                            serie, caso o catena gia calcolati
 """
 import json
 import re
-import shutil
 from pathlib import Path
 
 VARIANTS = ('Statore', 'NoStatore')
-CAD_DIR = 'CAD'
 
-# chiave -> (cartella sorgente relativa alla catena, nome sorgente, nome nella cartella CAD, stl)
+# chiave -> (cartella sorgente relativa alla catena, nome del file senza estensione)
 PIECES = (
-    ('tubo', '2_venturi/03_cad', 'tubo', '01_tubo', False),
-    ('rotore', '3_ventola/03_cad', 'ventola_A', '02_rotore', False),
-    ('statore', '3_ventola/03_cad', 'statore_A', '03_statore', False),
-    ('assieme', '4_sistema/03_cad', 'assieme_A', '04_assieme', False),
-    ('rotore_B', '3_ventola/03_cad', 'ventola_B_speculare', '02_rotore_B', True),
-    ('statore_B', '3_ventola/03_cad', 'statore_B_speculare', '03_statore_B', True),
-    ('assieme_B', '4_sistema/03_cad', 'assieme_B', '04_assieme_B', True),
+    ('tubo', '2_venturi/03_cad', 'tubo'),
+    ('rotore', '3_ventola/03_cad', 'ventola_A'),
+    ('statore', '3_ventola/03_cad', 'statore_A'),
+    ('assieme', '4_sistema/03_cad', 'assieme_A'),
+    ('rotore_B', '3_ventola/03_cad', 'ventola_B_speculare'),
+    ('statore_B', '3_ventola/03_cad', 'statore_B_speculare'),
+    ('assieme_B', '4_sistema/03_cad', 'assieme_B'),
 )
-DESCRIPTION = {
-    'tubo': 'condotto (tubo con bocca d\'imbocco e ugello), un solido',
-    'rotore': 'rotore: mozzo + pale fuse in un solido, versione A',
-    'statore': 'statore: mozzo fisso + pale fisse dopo il rotore, versione A',
-    'assieme': 'assieme: tubo + rotore + statore insieme, versione A',
-    'rotore_B': 'rotore speculare (versione B)',
-    'statore_B': 'statore speculare (versione B)',
-    'assieme_B': 'assieme con le parti speculari (versione B)',
-}
+STEP_OF = {'tubo': '2_venturi', 'rotore': '3_ventola', 'statore': '3_ventola', 'assieme': '4_sistema',
+           'rotore_B': '3_ventola', 'statore_B': '3_ventola', 'assieme_B': '4_sistema'}
 
 
 def _json(path):
@@ -102,7 +94,7 @@ def chain_state(chain_root, variant=None):
     root = Path(chain_root)
     expected = stator_expected(root, variant)
     src = {}
-    for key, folder, name, _, _ in PIECES:
+    for key, folder, name in PIECES:
         step = root/folder/f'{name}.step'
         if step.is_file():
             src[key] = step
@@ -147,104 +139,98 @@ def chain_state(chain_root, variant=None):
                 statore=expected, x_ventola_mm=info.get('fan_centre_x_mm'), root=root, variante=variant)
 
 
-def _copy(src, dst):
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    return dst
+# ---------------------------------------------------------------------------
+# LEGGIMI.txt dei tre step
+# ---------------------------------------------------------------------------
 
-
-def cad_path(case_root, variant):
-    base = Path(case_root)/CAD_DIR
-    return base/variant if variant else base
-
-
-def _size(path):
-    return f'{path.stat().st_size/2**20:.1f} MB'
-
-
-def readme_text(case_name, state, dest, solidworks):
-    v = state['variante']
-    title = f'CAD del caso {case_name}' + (f', variante {v}' if v else '')
-    sw = ('con statore' if state['statore'] else 'senza statore' if state['statore'] is False
-          else 'statore non noto')
-    L = [title, '=' * len(title), '', f'Stato: {"COMPLETA" if state["completa"] else "INCOMPLETA"} ({sw}).', '']
-    if not state['completa']:
-        L += ['QUESTA VARIANTE E INCOMPLETA.', 'File che mancano: ' + ', '.join(
-              f'{n}.step' for k, _, _, n, _ in PIECES if k in state['mancano']) + '.', 'Perche:']
-        L += [f'  - {p}' for p in state['problemi']] + ['']
-    if state['avvisi']:
-        L += ['Avvisi:'] + [f'  - {w}' for w in state['avvisi']] + ['']
-    L += ['UNITA E RIFERIMENTO (uguali per tutti i file)',
-          '  - Unita: millimetri (mm).',
-          '  - Asse X = asse del condotto, il flusso va verso +X. Origine: x = 0 al piano d\'ingresso '
-          'del condotto, sull\'asse (y = z = 0); la bocca d\'imbocco arrotondata sporge a monte (x < 0).']
+def _units(state):
+    L = ['Unita: millimetri (mm). Asse X = asse del condotto, il flusso va verso +X.',
+         "Origine: x = 0 al piano d'ingresso del condotto, sull'asse (y = z = 0); la bocca "
+         "d'imbocco arrotondata sporge a monte (x < 0)."]
     if state['x_ventola_mm'] is not None:
-        L += [f'  - La ventola e gia al suo posto: centro a x = {state["x_ventola_mm"]:.2f} mm. '
-              'Tubo, rotore, statore e assieme si sovrappongono senza spostamenti.']
-    L += ['  - Verso: rotore A visto da valle (guardando verso l\'ingresso) gira in senso orario; '
-          'B (speculare) in senso antiorario, per l\'ugello vicino che gira al contrario.',
-          '  - Il diametro delle pale nel CAD e il diametro di progetto meno 2 volte il gioco di punta '
-          '(0,5 mm per lato di default). Mozzo cilindrico senza ogiva ne attacco albero.', '',
-          'FILE DI QUESTA CARTELLA']
-    for key, _, _, new, is_b in PIECES:
-        where = f'speculari/{new}.step' if is_b else f'{new}.step'
-        if key in state['sorgenti']:
-            L.append(f'  {where:<34} {DESCRIPTION[key]} ({_size(state["sorgenti"][key])})')
-        elif key.startswith('statore') and state['statore'] is False:
-            L.append(f'  {where:<34} non c\'e: questa variante non ha lo statore')
-        else:
-            L.append(f'  {where:<34} MANCA: {DESCRIPTION[key]}')
-    L += ['  stl/                               le stesse parti come mesh STL (per CFD, stampa 3D, anteprime)',
-          '  solidworks/                        versione pensata per SolidWorks (vedi sotto)', '',
-          'QUALE APRIRE IN SOLIDWORKS']
-    if solidworks.get('ok'):
-        L += ['  1. solidworks/04_assieme_A_AP214.step: assieme con i componenti nominati '
-              '(tubo, rotore_A, statore_A); oppure le parti singole 02_rotore_A_AP214.step, '
-              '03_statore_A_AP214.step.',
-              '  2. Se non si apre: gli stessi file con _AP203 (schema piu vecchio e diffuso).',
-              '  3. Se nessuno STEP si apre: i file .igs (IGES, solidi B-rep).',
-              '  4. Le parti speculari B sono in solidworks/speculari/ (AP214 e AP203).',
-              '  Dove SolidWorks lo chiede, scegliere di importare come SOLIDO (non solo superfici).',
-              '  Differenza con i file 01..04 di questa cartella: stessa geometria, ma nomi di parte, '
-              'AP214 o AP203 a scelta, mm dichiarati, senza curve sulle superfici (file piu leggeri).']
-        if solidworks.get('sezioni_rotore') is not None:
-            L.append(f'  Sezioni delle pale: rotore {solidworks["sezioni_rotore"]}'
-                     + (f', statore {solidworks["sezioni_statore"]}' if solidworks.get('sezioni_statore') else '')
-                     + f' (tolleranza di semplificazione {solidworks["tolleranza_mm"]:g} mm; '
-                     'dettagli in solidworks/INFO_solidworks.json).')
+        L.append(f'La ventola e gia al suo posto (centro a x = {state["x_ventola_mm"]:.2f} mm): '
+                 'tubo, rotore, statore e assieme si sovrappongono senza spostamenti.')
+    return L
+
+
+def _file_line(folder, state, key, text):
+    """Una riga per un file del 03_cad; MANCA se la catena doveva averlo e non c'e."""
+    step = next(n for k, _, n in PIECES if k == key)
+    if key in state['sorgenti']:
+        return f'  {step + ".step / .stl":<34} {text}'
+    if key.startswith('statore') and state['statore'] is False:
+        return f"  {step + '.step':<34} non c'e: questa variante non ha lo statore"
+    return f'  {step + ".step":<34} MANCA: {text}'
+
+
+def readme_step(step, state, sw, case_name):
+    """Testo del LEGGIMI.txt di 2_venturi/03_cad, 3_ventola/03_cad o 4_sistema/03_cad."""
+    v = state['variante']
+    title = f'CAD - {case_name}' + (f' / {v}' if v else '') + f' - {step}'
+    L = [title, '=' * len(title), '']
+    if not state['completa']:
+        L += ['ATTENZIONE: questa catena e INCOMPLETA: il motivo e i file che mancano sono nel',
+              'RIEPILOGO.md del caso.', '']
+    L += _units(state) + ['']
+    sw_ok = sw.get('ok')
+    if step == '2_venturi':
+        L += ['FILE', _file_line(step, state, 'tubo', "condotto (tubo con bocca d'imbocco e ugello), un solido"),
+              '  fluido.step / .stl                 dominio del fluido (per CFD), zona_disco.*',
+              '  profilo.dxf / profilo.csv          profilo del condotto (sezione)', '',
+              'IN SOLIDWORKS']
+        L += (['  Aprire solidworks/tubo_AP214.step. Se non si apre: solidworks/tubo_AP203.step; '
+               'poi solidworks/tubo.igs (IGES).'] if sw_ok else _no_sw(sw, 'tubo.step'))
+    elif step == '3_ventola':
+        L += ['FILE', _file_line(step, state, 'rotore', 'rotore A: mozzo + pale fuse in un solido'),
+              _file_line(step, state, 'statore', 'statore A: mozzo fisso + pale fisse dopo il rotore'),
+              _file_line(step, state, 'rotore_B', 'rotore speculare B (ugello che gira al contrario)'),
+              _file_line(step, state, 'statore_B', 'statore speculare B'),
+              '  pala.step / .stl                   una pala sola; CAD_info.json: volumi e controlli', '',
+              'Verso: il rotore A visto da valle gira in senso orario, il B (speculare) in senso '
+              'antiorario. Il diametro delle pale e quello di progetto meno 2 volte il gioco di punta '
+              '(0,5 mm per lato di default). Mozzo cilindrico, senza ogiva ne attacco albero.', '',
+              'IN SOLIDWORKS']
+        L += (['  Aprire solidworks/rotore_A_AP214.step e solidworks/statore_A_AP214.step '
+               '(AP203 e IGES come ripiego). Le parti speculari B sono in solidworks/speculari/.']
+              if sw_ok else _no_sw(sw, 'ventola_A.step'))
+        if sw_ok and sw.get('sezioni_rotore') is not None:
+            L.append(f'  Sezioni delle pale: rotore {sw["sezioni_rotore"]}'
+                     + (f', statore {sw["sezioni_statore"]}' if sw.get('sezioni_statore') else '')
+                     + f' (tolleranza {sw["tolleranza_mm"]:g} mm; dettagli in solidworks/INFO_solidworks.json).')
     else:
-        L += ['  La versione per SolidWorks non e stata scritta: ' + (solidworks.get('motivo') or 'non richiesta')
-              + '.', '  Provare i file 01..04 di questa cartella.']
-    L += ['', 'ALTRI FILE (restano nelle cartelle di calcolo)',
-          '  2_venturi/03_cad: dominio del fluido (fluido.step), profilo.dxf/csv; 3_ventola/03_cad: una pala '
-          'sola (pala.step), CAD_info.json con volumi e controlli di ogni parte; '
-          '4_sistema/03_cad: assiemi originali.', '']
+        L += ['FILE', _file_line(step, state, 'assieme', 'assieme A: tubo + rotore + statore'),
+              _file_line(step, state, 'assieme_B', 'assieme B, con le parti speculari'), '',
+              'IN SOLIDWORKS']
+        L += (['  Aprire solidworks/assieme_A_AP214.step: assieme con i componenti nominati '
+               '(tubo, rotore_A, statore_A). Se non si apre: assieme_A_AP203.step, poi assieme_A.igs.',
+               '  La versione B e in solidworks/speculari/.'] if sw_ok else _no_sw(sw, 'assieme_A.step'))
+    if sw_ok:
+        L += ['  Scegliere di importare come SOLIDO (non solo superfici).',
+              '  Rispetto agli altri file di questa cartella: stessa geometria, ma con nomi di parte, '
+              'mm dichiarati, AP214 o AP203 a scelta, senza curve sulle superfici (file piu leggeri).']
+    L.append('')
     return '\n'.join(L)
 
 
-def build_chain(case_root, variant, chain_root, solidworks=True, log=print):
-    """Costruisce <caso>/CAD/<variante>/ dai file esistenti; ritorna lo stato (chain_state)."""
-    state = chain_state(chain_root, variant)
-    dest = cad_path(case_root, variant)
-    if dest.exists():
-        shutil.rmtree(dest)         # solo la cartella CAD di questa variante, ricostruita da capo
-    dest.mkdir(parents=True)
-    for key, _, _, new, is_b in PIECES:
-        if key not in state['sorgenti']:
-            continue
-        step = state['sorgenti'][key]
-        _copy(step, dest/('speculari' if is_b else '.')/f'{new}.step')
-        stl = step.with_suffix('.stl')
-        if stl.is_file():
-            _copy(stl, dest/'stl'/f'{new}.stl')
+def _no_sw(sw, fallback):
+    return ['  La versione per SolidWorks non e stata scritta: ' + (sw.get('motivo') or 'non richiesta') + '.',
+            f'  Provare {fallback} di questa cartella.']
+
+
+def build_chain(chain_root, variant=None, solidworks=True, log=print):
+    """solidworks/ e LEGGIMI.txt nei 03_cad di una catena; ritorna lo stato (chain_state)."""
+    root = Path(chain_root)
+    state = chain_state(root, variant)
     sw = dict(ok=False, motivo='non richiesta')
+    if not solidworks and (root/'3_ventola'/'03_cad'/'solidworks').is_dir():
+        sw = dict(ok=True)         # versione SolidWorks scritta in precedenza: resta com'e
     if solidworks:
         if not ({'rotore', 'rotore_B'} <= set(state['sorgenti'])):
             sw['motivo'] = 'manca il CAD del rotore'
         else:
             try:
                 from ventola_designer.cad_solidworks import build_solidworks
-                data = build_solidworks(chain_root, dest/'solidworks', log=log)
+                data = build_solidworks(root, log=log)
                 sw = dict(ok=True, **{k: data.get(k) for k in ('sezioni_rotore', 'sezioni_statore',
                                                               'tolleranza_mm')})
                 state['avvisi'] += [f'solidworks: {e}' for e in data.get('errori', [])]
@@ -254,66 +240,22 @@ def build_chain(case_root, variant, chain_root, solidworks=True, log=print):
                 sw['motivo'] = str(exc)
                 state['avvisi'].append(f'versione SolidWorks non scritta: {exc}')
                 log(f'  AVVISO versione SolidWorks di {variant or "catena"}: {exc}')
-    name = Path(case_root).name
-    (dest/'LEGGIMI.txt').write_text(readme_text(name, state, dest, sw), encoding='utf-8-sig')
+    name = root.parent.name if variant else root.name
+    for step in ('2_venturi', '3_ventola', '4_sistema'):
+        cad = root/step/'03_cad'
+        if cad.is_dir():
+            (cad/'LEGGIMI.txt').write_text(readme_step(step, state, sw, name), encoding='utf-8-sig')
     return state
 
 
 def build_case(case_root, solidworks=True, log=print):
-    """CAD di tutte le catene del caso + <caso>/CAD/LEGGIMI.txt. Ritorna [stato]."""
+    """solidworks/ + LEGGIMI.txt di tutte le catene del caso. Ritorna [stato]."""
     root = Path(case_root)
     states = []
     for variant, chain_root in case_chains(root):
         log(f'  CAD {root.name}' + (f'/{variant}' if variant else ''))
-        states.append(build_chain(root, variant, chain_root, solidworks, log))
-    if any(s['variante'] for s in states):
-        write_case_readme(root, states)
+        states.append(build_chain(chain_root, variant, solidworks, log))
     return states
-
-
-def _status_line(state):
-    if state['completa']:
-        return 'completa'
-    return 'INCOMPLETA - ' + '; '.join(state['problemi'][:2])
-
-
-def write_case_readme(case_root, states):
-    root = Path(case_root)
-    L = [f'CAD del caso {root.name}', '=' * (11 + len(root.name)), '',
-         'Una cartella per variante; in ognuna c\'e un LEGGIMI.txt con i dettagli.', '']
-    for s in states:
-        L.append(f'  {s["variante"]}/  {_status_line(s)}')
-    L += ['', 'Unita: mm. Asse X lungo il flusso, x = 0 all\'ingresso del condotto.', '']
-    (root/CAD_DIR/'LEGGIMI.txt').write_text('\n'.join(L), encoding='utf-8-sig')
-
-
-def write_series_index(series_root, case_roots):
-    """<serie>/CAD/INDICE.txt: i casi, lo stato del CAD di ogni variante e dove sta."""
-    root = Path(series_root)
-    L = [f'Indice del CAD della serie {root.name}', '=' * (27 + len(root.name)), '',
-         'Per ogni caso: <caso>/CAD/<variante>/ (LEGGIMI.txt dentro). Unita: mm.', '']
-    incomplete = 0
-    for case in case_roots:
-        case = Path(case)
-        L.append(case.name)
-        chains = case_chains(case)
-        if not chains:
-            L.append('    nessuna catena calcolata (cartelle 2_venturi/3_ventola assenti)')
-        for variant, chain_root in chains:
-            state = chain_state(chain_root, variant)
-            incomplete += not state['completa']
-            where = f'{case.name}/{CAD_DIR}/{variant}' if variant else f'{case.name}/{CAD_DIR}'
-            L.append(f'    {variant or "(catena unica)"}: {_status_line(state)}')
-            L.append(f'        {where}')
-            for p in state['problemi'] if not state['completa'] else []:
-                L.append(f'        perche: {p}')
-        L.append('')
-    L.insert(4, f'Casi: {len(list(case_roots))}; varianti incomplete: {incomplete}.')
-    L.insert(5, '')
-    out = root/CAD_DIR
-    out.mkdir(parents=True, exist_ok=True)
-    (out/'INDICE.txt').write_text('\n'.join(L), encoding='utf-8-sig')
-    return out/'INDICE.txt'
 
 
 def find_cases(path):
@@ -323,19 +265,16 @@ def find_cases(path):
         p = p.parent
     if case_chains(p):
         return 'caso', [p]
-    cases = [d for d in sorted(p.iterdir()) if d.is_dir() and d.name != CAD_DIR and case_chains(d)]
+    cases = [d for d in sorted(p.iterdir()) if d.is_dir() and case_chains(d)]
     if cases:
         return 'serie', cases
     raise ValueError(f'{p}: non e una serie ne un caso calcolato (mancano 2_venturi, 3_ventola, Statore/NoStatore)')
 
 
 def rebuild(path, solidworks=True, log=print):
-    """Ricostruisce la cartella CAD (e l'indice se e una serie) dai risultati esistenti."""
+    """Rigenera solidworks/ e i LEGGIMI.txt dai risultati esistenti (nessun calcolo)."""
     kind, cases = find_cases(path)
     states = {}
     for case in cases:
         states[case] = build_case(case, solidworks, log)
-    if kind == 'serie':
-        index = write_series_index(path, cases)
-        log(f'Indice: {index}')
     return kind, states

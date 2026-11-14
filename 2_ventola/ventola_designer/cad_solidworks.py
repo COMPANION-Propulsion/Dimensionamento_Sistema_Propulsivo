@@ -6,7 +6,7 @@ pesanti: centinaia di superfici B-spline, 100-250 mila punti per parte, nessun n
 schema AP214 di Open CASCADE. Qui si riscrive lo stesso progetto in modo piu semplice da
 leggere, senza cambiare nulla del dimensionamento:
 
-  - ogni parte e un solo solido con il suo NOME (02_rotore_A, 03_statore_A...); l'assieme e
+  - ogni parte e un solo solido con il suo NOME (tubo, rotore_A, statore_A...); l'assieme e
     un vero assieme con i componenti nominati (tubo, rotore_A, statore_A);
   - unita mm dichiarate esplicitamente (xstep.cascade.unit e write.step.unit = MM);
   - due schemi per ogni file: AP214 (AUTOMOTIVE_DESIGN, IS) e AP203 (CONFIG_CONTROL_DESIGN),
@@ -23,6 +23,7 @@ Si rigenera dai risultati esistenti (report.json della ventola, CAD_info.json, t
 nessun calcolo aerodinamico, solo la costruzione dei solidi.
 """
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -218,51 +219,74 @@ def build_parts(chain_root, tol_mm=SW_TOL_MM):
     return parts, data
 
 
-NUMBERS = {'tubo': '01_tubo', 'rotore': '02_rotore', 'statore': '03_statore', 'assieme': '04_assieme'}
+
+def solidworks_dirs(chain_root):
+    """Cartelle SolidWorks della catena: ogni parte sta nel 03_cad del proprio step."""
+    root = Path(chain_root)
+    return dict(tubo=root/'2_venturi'/'03_cad'/'solidworks',
+                ventola=root/'3_ventola'/'03_cad'/'solidworks',
+                assieme=root/'4_sistema'/'03_cad'/'solidworks')
 
 
-def build_solidworks(chain_root, out_dir, tol_mm=SW_TOL_MM, log=print):
-    """Scrive in out_dir (e out_dir/speculari) le versioni per SolidWorks di una catena.
+def build_solidworks(chain_root, tol_mm=SW_TOL_MM, log=print):
+    """Scrive le versioni per SolidWorks di una catena, ognuna nel 03_cad del suo step:
+    tubo -> 2_venturi/03_cad/solidworks, rotore e statore -> 3_ventola/03_cad/solidworks,
+    assieme -> 4_sistema/03_cad/solidworks (le versioni speculari B in speculari/).
 
     Per ogni parte e per l'assieme: STEP AP214 e AP203 (nomi, mm), IGES per le versioni A.
-    Ritorna un dict con la scelta delle sezioni, i file e la verifica di ognuno; lo scrive
-    anche in out_dir/INFO_solidworks.json. Un file che non si scrive e annotato, non ferma gli altri.
+    Ritorna un dict con la scelta delle sezioni, i file (percorso relativo alla catena) e la
+    verifica di ognuno; lo scrive anche in 3_ventola/03_cad/solidworks/INFO_solidworks.json.
+    Un file che non si scrive e annotato, non ferma gli altri. Le cartelle solidworks
+    precedenti sono rifatte da capo.
     """
-    out = Path(out_dir)
-    (out/'speculari').mkdir(parents=True, exist_ok=True)
+    root = Path(chain_root)
     parts, data = build_parts(chain_root, tol_mm)
+    dirs = solidworks_dirs(root)
+    for d in dirs.values():
+        if d.exists():
+            shutil.rmtree(d)
     files, errors = [], []
 
     def emit(folder, base, items, iges):
+        folder.mkdir(parents=True, exist_ok=True)
         expected = sum(_volume(s) for _, s in items)
         for schema in ('AP214', 'AP203'):
             path = folder/f'{base}_{schema}.step'
             try:
                 write_step(path, items, schema)
-                files.append(_check(path, expected, schema))
+                row = _check(path, expected, schema)
+                row['file'] = path.relative_to(root).as_posix()
+                files.append(row)
             except Exception as exc:
                 errors.append(f'{path.name}: {exc}')
                 log(f'  AVVISO {path.name}: {exc}')
         if iges:
             try:
                 write_iges(folder/f'{base}.igs', [s for _, s in items])
-                files.append(dict(file=f'{base}.igs', schema='IGES', valido=None))
+                files.append(dict(file=(folder/f'{base}.igs').relative_to(root).as_posix(),
+                                  schema='IGES', valido=None))
             except Exception as exc:
                 errors.append(f'{base}.igs: {exc}')
                 log(f'  AVVISO {base}.igs: {exc}')
 
-    for side, folder, iges in (('A', out, True), ('B', out/'speculari', False)):
+    for side, sub, iges in (('A', '', True), ('B', 'speculari', False)):
         sides = {k: v for k, v in parts.items() if k == 'tubo' or k.endswith('_' + side)}
         names = {'tubo': 'tubo', f'rotore_{side}': f'rotore_{side}', f'statore_{side}': f'statore_{side}'}
+
+        def where(key):
+            return dirs[key]/sub if sub else dirs[key]
+
         if side == 'A' and 'tubo' in sides:
-            emit(folder, NUMBERS['tubo'], [('tubo', sides['tubo'])], iges)
+            emit(where('tubo'), 'tubo', [('tubo', sides['tubo'])], iges)
         for kind in ('rotore', 'statore'):
             key = f'{kind}_{side}'
             if key in sides:
-                emit(folder, f"{NUMBERS[kind]}_{side}", [(key, sides[key])], iges)
+                emit(where('ventola'), key, [(key, sides[key])], iges)
         items = [(names[k], sides[k]) for k in names if k in sides]
         if len(items) > 1:
-            emit(folder, f"{NUMBERS['assieme']}_{side}", items, iges)
+            emit(where('assieme'), f'assieme_{side}', items, iges)
     data.update(file=files, errori=errors)
-    (out/'INFO_solidworks.json').write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    info = dirs['ventola']
+    info.mkdir(parents=True, exist_ok=True)
+    (info/'INFO_solidworks.json').write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
     return data

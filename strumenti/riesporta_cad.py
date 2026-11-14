@@ -1,20 +1,22 @@
 """
 riesporta_cad.py
 ================
-Rigenera la cartella CAD (nomi chiari + versione per SolidWorks) dai risultati GIA calcolati.
-Non ricalcola nulla: ne venturi, ne ventola, ne sistema. Legge i STEP/STL che ci sono, i
-report.json e CAD_info.json, ricostruisce i solidi semplificati per SolidWorks (qualche
-decina di secondi per catena) e scrive:
+Rigenera la versione per SolidWorks e i LEGGIMI.txt dai risultati GIA calcolati. Non
+ricalcola nulla: ne venturi, ne ventola, ne sistema. Legge i STEP, i report.json e i
+CAD_info.json, ricostruisce i solidi semplificati per SolidWorks (qualche decina di secondi
+per catena) e scrive, dentro i 03_cad degli step (nessuna cartella CAD nella radice del caso):
 
-    <caso>/CAD/<variante>/   01_tubo.step ... 04_assieme.step, speculari/, stl/, solidworks/, LEGGIMI.txt
-    <serie>/CAD/INDICE.txt   se la cartella data e una serie di casi
+    <catena>/2_venturi/03_cad/solidworks/    tubo (AP214, AP203, IGES)
+    <catena>/3_ventola/03_cad/solidworks/    rotore e statore (+ speculari/, INFO_solidworks.json)
+    <catena>/4_sistema/03_cad/solidworks/    assieme con i componenti nominati (+ speculari/)
+    <catena>/<step>/03_cad/LEGGIMI.txt       cosa e ogni file, mm, asse, quale aprire
 
 Uso (dalla cartella Dimensionamento_Sistema_Propulsivo):
 
     python strumenti/riesporta_cad.py risultati/Run_20261114_fine_Ottimizzato
     python strumenti/riesporta_cad.py risultati/Run_20261114_fine_Ottimizzato/massa_6
     python strumenti/riesporta_cad.py risultati/Run_20261114_fine_Ottimizzato/massa_6/Statore
-    python strumenti/riesporta_cad.py <cartella> --senza-solidworks     solo copie con nomi chiari
+    python strumenti/riesporta_cad.py <cartella> --senza-solidworks     solo i LEGGIMI.txt
 
 Equivale a `python run_sistema.py --solo cad` ma non legge input.py: va bene anche per
 risultati vecchi o copiati altrove. Un processo solo, un caso alla volta: la memoria resta bassa.
@@ -29,10 +31,10 @@ for folder in ("2_ventola", "3_sistema"):
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Rigenera la cartella CAD dai risultati esistenti (nessun calcolo).")
+    p = argparse.ArgumentParser(description="Rigenera la versione SolidWorks e i LEGGIMI.txt dai risultati esistenti (nessun calcolo).")
     p.add_argument("cartella", help="serie, caso o catena (Statore / NoStatore) gia calcolati")
     p.add_argument("--senza-solidworks", action="store_true",
-                   help="solo le copie con nomi chiari e il LEGGIMI.txt, senza ricostruire i solidi")
+                   help="solo i LEGGIMI.txt, senza ricostruire i solidi per SolidWorks")
     args = p.parse_args(argv)
     path = os.path.abspath(args.cartella)
     if not os.path.isdir(path):
