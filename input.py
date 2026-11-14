@@ -2,7 +2,11 @@
 CASO = {
     # Results folder risultati/<nome>/. With a series (see above) it is the series folder and
     # every case is risultati/<nome>/<etichetta>/.
+<<<<<<< HEAD
     "nome": "Run_20261114_6kg_Statore_v2",         # None = name built from the inputs + hash, or a string of your choice
+=======
+    "nome": "Run_20261114_6kg_Statore",         # None = name built from the inputs + hash, or a string of your choice
+>>>>>>> a07e80754bf81ca082e664d5f12b33bf78f2e320
     # A folder with a name whose stored inputs differ from these is refused unless this is True.
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
