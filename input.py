@@ -63,8 +63,16 @@ VENTURI = {
                                #     SISTEMA["iterazioni_fascia"] passes (history in fascia.json).
                                #     Run alone (run_venturi.py) it is used as it is
     "D_disk_min_ratio": 0.4,   # [-] smallest duct and fan diameter / largest inner diameter (0-1)
-    "D_ventola": None,         # [m] fixed fan diameter for the scan, None = largest the inlet allows
-                               #     ("griglia" and the scan of "griglia+forma")
+    "D_ventola": None,         # fan diameter. None = chosen by the optimiser (the scan uses the
+                               #     largest the inlet allows, the shape optimisation moves it);
+                               #     run_sistema.py adapts it by itself: if the fan cannot be
+                               #     designed it reruns the venturi with a larger diameter (+1/3,
+                               #     +2/3 of the way to the largest, then the largest) and keeps
+                               #     the first that works (fascia.json, RIEPILOGO.md).
+                               #     A number [m] = held fixed in scan and shape optimisation;
+                               #     "max" = held at the largest the input allows (D_ext_max,
+                               #     gap_parete, spessore_parete, raggio_bocca_su_D). No adaptation
+                               #     with a number or "max"
     "P_max": None,             # [W] largest power, None = no limit
 
     # --- fan model in the duct ----------------------------------------------
@@ -105,7 +113,7 @@ VENTURI = {
     "turbulence_model": "baldwin_lomax",   # turbulence model of the duct flow
     "n_up": 8,                 # free control points of the intake (5-8: more only adds time)
     "n_down": 10,               # free control points of the diffuser (8-10)
-    "grid": "fine",        # "coarse" (optimise on 64x26, check up to 128x51), "medium" or "fine"
+    "grid": "coarse",        # "coarse" (optimise on 64x26, check up to 128x51), "medium" or "fine"
                            #   (optimise up to 128x51, check up to 256x102): finer = slower, the longest
                            #   step of the chain; the check gives the error on dp
     "jobs": 3,                 # grids solved at the same time in the final check (3 grids)
@@ -191,7 +199,7 @@ SISTEMA = {
                                  #   mass -> power decision); None = SPINTA["n_ugelli"]
     "esponente_potenza_massa": 1.5,  # [-] power ~ mass^e at fixed geometry (actuator disk: thrust ~ mass,
                                  #   power ~ thrust^1.5); SPINTA["massa"] is the vehicle mass with the reference variant
-    "processi": 4,            # most processes of the whole run (series, variants, scan, grid study, fan
+    "processi": 8,            # most processes of the whole run (series, variants, scan, grid study, fan
                                  #   together; the cap is split going inwards); None = automatic:
                                  #   min(physical cores, floor(0.6 x free RAM / 1.5 GB)), at least 1;
                                  #   1 = everything in sequence, as before

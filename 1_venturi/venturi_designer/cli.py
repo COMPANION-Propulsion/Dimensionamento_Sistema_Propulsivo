@@ -29,7 +29,8 @@ from .core.propulsion import GRID_LEVELS, PropulsionCase
 from .export import export_all
 from .export.duct import export_duct_results, output_dirs
 from .geometry import create_venturi_geometry
-from .optimization.shape_opt import DuctProblem, for_grid, initial_design, report
+from .optimization.shape_opt import (DuctProblem, for_grid, initial_design, inlet_radius_limit,
+                                     report)
 from .optimization.sizing import run_optimization
 from .optimization.fan_curve import FanCurve, operating_point
 from .optimization.alternatives import alternatives_table, lengths_from_input, run_alternatives
@@ -256,6 +257,24 @@ def load_case(path: str, T_target: Optional[float] = None):
     return case, inputs
 
 
+def resolve_fan_diameter(case, value) -> Optional[float]:
+    """VENTURI["D_ventola"] as a diameter [m]: None = free (chosen by the optimiser), "max" = the
+    largest the bell mouth and the inner duct allow (what the scan uses when it is free), a
+    number = that diameter. Checked against the same limits."""
+    if value is None:
+        return None
+    R_max = min(inlet_radius_limit(case), case.R_int_max)
+    if isinstance(value, str):
+        if value.strip().lower() != "max":
+            raise ValueError(f"D_ventola must be None, a number [m] or 'max', got '{value}'.")
+        return 2.0 * R_max
+    D = float(value)
+    if not 2.0 * case.R_min - 1e-9 <= D <= 2.0 * R_max + 1e-9:
+        raise ValueError(f"D_ventola {1e3 * D:.1f} mm is outside the range the duct allows "
+                         f"({2e3 * case.R_min:.1f} to {2e3 * R_max:.1f} mm).")
+    return D
+
+
 def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True, procs=1):
     """Grid scan of the duct (scan.py), then the dp for the thrust when there is no curve
     (match=False: the scan only, the shape optimisation follows). procs > 1: the cases of the
@@ -309,6 +328,10 @@ def run_target_thrust(args) -> int:
         inputs = load_inputs(args.input)
         T, source = thrust_target(inputs, args.input, results_dir)
         case, inputs = load_case(args.input, T)
+        D_fan = resolve_fan_diameter(case, inputs.get("D_ventola"))
+        inputs["D_ventola"] = D_fan
+        if D_fan is not None:
+            case = replace(case, R_disk_fisso=0.5 * D_fan)
         layout, design = initial_design(case, inputs.get("n_up", 5), inputs.get("n_down", 8))
         root = args.output_dir or caso.step_dir("venturi", args.input, results_dir)
     except ValueError as e:
@@ -317,6 +340,8 @@ def run_target_thrust(args) -> int:
     dirs = output_dirs(root)
     level = GRID_LEVELS[inputs["grid"]]
     print(f"Thrust per nozzle {T:.5g} N (from {source})")
+    if D_fan is not None:
+        print(f"Fan diameter held at {1e3 * D_fan:.2f} mm (D_ventola)")
     mode = inputs.get("ottimizzatore", "griglia")
     scan_mode = mode in ("griglia", "griglia+forma")
     print(f"Tube within D {case.D_ext_max * 1e3:.1f} mm x L {case.L_max * 1e3:.1f} mm, inner duct "

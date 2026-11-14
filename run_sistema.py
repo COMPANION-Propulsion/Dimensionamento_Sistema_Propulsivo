@@ -27,16 +27,26 @@ the pair is repeated, at most SISTEMA["iterazioni_fascia"] times, until it chang
 0.5 mm. The alternatives and the exit scan of the venturi run in the last pass only. History in
 <chain>/fascia.json.
 
+Adaptive fan diameter. With VENTURI["D_ventola"] = None the venturi chooses the fan diameter.
+If the fan step then finds no design (exit code other than 0/3, or report.json without "best"),
+the chain does not stop: the venturi is run again with the diameter held at the venturi value
++ 1/3, then + 2/3 of the way to the largest one the input allows (D_ext_max, gap_parete,
+spessore_parete, raggio_bocca_su_D), then at that largest one (steps under 0.5 mm skipped), and
+the fan is tried again. The first diameter that works is kept for the rest of the chain (it goes
+into input_usato.py as VENTURI["D_ventola"]); every attempt is in fascia.json and the change in
+RIEPILOGO.md. A number or "max" in D_ventola holds the diameter: no adaptation.
+
 Chains. SISTEMA["confronto_statore"] = True: after 1_spinta/ (shared) the chain
 venturi -> fan (+ band loop) -> sistema runs twice, in risultati/<caso>/Statore/ and
 risultati/<caso>/NoStatore/ (each with 2_venturi, 3_ventola, 4_sistema, input_usato.py,
 fascia.json and a copy of 1_spinta/spinta.json), then confronto_varianti writes
 risultati/<caso>/5_confronto_statore/. False: one chain in risultati/<caso>/ as before.
 Each chain gets its own input_usato.py: input.py + the overridden L_disk, T_ugello (from
-spinta.json, so the venturi needs no spinta folder next to it) and stator flag.
+spinta.json, so the venturi needs no spinta folder next to it), stator flag and, when the fan
+diameter was adapted, D_ventola.
 
 --solo venturi | ventola | sistema runs that one step in every chain (no band loop), with the
-L_disk of the last pass of fascia.json (input.py if there is none).
+L_disk (and adapted fan diameter) of the last pass of fascia.json (input.py if there is none).
 
 Series of cases. A value of input.py written as a string with ";" ("massa": "4; 6") makes a
 series: every combination (SISTEMA["combinazioni"]: "tutte" or "accoppiate") is a complete chain
@@ -546,12 +556,16 @@ def thrust_value(inputs: dict, case_root: str) -> float:
 
 
 def write_chain_input(input_file: str, folder: str, label: str, L_disk: float, T_ugello: float,
-                      stator=None) -> str:
-    """folder/input_usato.py: input.py plus the keys this chain overrides. Returns its path."""
+                      stator=None, D_ventola=None) -> str:
+    """folder/input_usato.py: input.py plus the keys this chain overrides. Returns its path.
+
+    D_ventola [m]: fan diameter held by the adaptation of the chain (None = as in input.py)."""
     with open(input_file, encoding="utf-8") as fh:
         text = fh.read()
+    fan = "" if D_ventola is None else f', "D_ventola": {float(D_ventola)!r}'
     lines = ["", "", f"# ---- run_sistema.py: values overridden for this chain ({label}) ----",
-             f'VENTURI = {{**VENTURI, "L_disk": {float(L_disk)!r}, "T_ugello": {float(T_ugello)!r}}}']
+             f'VENTURI = {{**VENTURI, "L_disk": {float(L_disk)!r}, "T_ugello": {float(T_ugello)!r}'
+             f'{fan}}}']
     if stator is not None:
         lines.append('VENTOLA = {**VENTOLA, "statore": {**VENTOLA.get("statore", {}), '
                      f'"presente": {bool(stator)!r}}}}}')
@@ -585,6 +599,38 @@ def _kw(procs) -> dict:
     return {} if procs is None else {"procs": procs}
 
 
+ADAPT_STEP_MIN_M = 0.5e-3   # smallest change of the fan diameter worth a new venturi + fan pass
+
+
+class FanFailed(RuntimeError):
+    """The fan step found no design for this duct; dp [Pa], D [m] and Q [m3/s] of the venturi."""
+
+    def __init__(self, why: str, dp: float, D: float, Q: float):
+        super().__init__(f"{why} (D ventola {1e3 * D:.2f} mm, dp {dp:.1f} Pa, "
+                         f"portata {1e3 * Q:.2f} L/s)")
+        self.dp, self.D, self.Q = dp, D, Q
+
+
+def max_fan_diameter(input_file: str, T: float) -> float:
+    """Largest fan diameter [m] the input allows (bell mouth and inner duct), as the venturi
+    computes it for VENTURI["D_ventola"] = "max"."""
+    from venturi_designer.cli import load_case, resolve_fan_diameter
+    case, _ = load_case(input_file, T)
+    return resolve_fan_diameter(case, "max")
+
+
+def adaptive_diameters(D0: float, D_max: float, step_min: float = ADAPT_STEP_MIN_M) -> list:
+    """Fan diameters [m] to try after a failure at D0: D0 + 1/3 and + 2/3 of the way to D_max,
+    then D_max. A step less than step_min from the previous diameter (or, for the intermediate
+    ones, from D_max) is skipped; empty when D_max is less than step_min above D0."""
+    out, last = [], D0
+    for D in (D0 + (D_max - D0) / 3.0, D0 + 2.0 * (D_max - D0) / 3.0, D_max):
+        if D - last >= step_min and (D == D_max or D_max - D >= step_min):
+            out.append(D)
+            last = D
+    return out
+
+
 def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, prev=None,
                 procs=None):
     """One venturi + fan pass; returns (row without the update, risultati dict, report dict).
@@ -601,14 +647,17 @@ def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, p
         raise RuntimeError(f"venturi failed (code {rc})")
     res = _read_json(venturi_dir, "00_sintesi", "risultati.json")
     dp, D = res["ventola"]["dp_disk_Pa"], res["ventola"]["D_ventola_m"]
+    Q = res["ventola"].get("portata_m3_s", float("nan"))
     reused = bool(prev) and abs(dp - prev[0]) <= 1e-6 * abs(prev[0]) and abs(D - prev[1]) <= 1e-9
     if not reused:
         rc = run_ventola(derived, folder, **_kw(procs))
-        if rc != 0:
+        if rc == 1:                    # input error of the fan: another diameter does not help
             raise RuntimeError(f"fan failed (code {rc})")
+        if rc not in (0, 3):
+            raise FanFailed(f"fan failed (code {rc})", dp, D, Q)
     rep = _read_json(folder, "3_ventola", "00_sintesi", "report.json")
     if not rep or not rep.get("best"):
-        raise RuntimeError("the fan step found no accepted design")
+        raise FanFailed("the fan step found no accepted design", dp, D, Q)
     need = band_need(rep, res, stator_on, os.path.join(folder, "3_ventola", "03_cad"))
     return dict(skip_extras=skip_extras, ventola_riusata=reused, dp_Pa=dp,
                 L_tubo_mm=res["geometria"]["L_tubo_mm"], D_ventola_mm=1e3 * D,
@@ -634,6 +683,55 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
     rows, prev, it = [], None, 0
     path = os.path.join(folder, "fascia.json")
     prepare_chain(case_root, folder)
+    free_fan = V.get("D_ventola") is None      # diameter chosen by the venturi: may be adapted
+    fan = dict(D=None, D0=None)   # D: diameter held for the rest of the chain, D0: the first failing one
+
+    def attempt_failed(e, n, L_used, k):
+        rows.append(dict(iterazione=n, L_disk_m=L_used, tentativo_ventola=k,
+                         D_ventola_mm=1e3 * e.D, dp_Pa=e.dp, portata_L_s=1e3 * e.Q,
+                         esito="ventola non progettabile", errore=str(e)))
+        write_json(path, rows)
+
+    def run_pass(L_used, skip_extras, prev_pass, n):
+        """fascia_pass with the adaptive fan diameter; returns (row, res, rep) of the pass."""
+        derived = write_chain_input(input_file, folder, name, L_used, T, stator, fan["D"])
+        try:
+            row, res, rep = fascia_pass(derived, folder, stator_on, skip_extras, prev_pass,
+                                        procs=procs)
+        except FanFailed as e:
+            if not free_fan:
+                raise
+            err = e
+        else:
+            if fan["D"] is not None:
+                row.update(D_ventola_fissato_mm=1e3 * fan["D"],
+                           D_ventola_adattato_da_mm=1e3 * fan["D0"])
+            return row, res, rep
+        if fan["D0"] is None:
+            fan["D0"] = err.D
+        attempt_failed(err, n, L_used, 0)
+        D_max = max_fan_diameter(derived, T)
+        for k, D in enumerate(adaptive_diameters(err.D, D_max), 1):
+            say(f"Ventola non progettabile con D = {1e3 * err.D:.1f} mm: "
+                f"riprovo il venturi con D = {1e3 * D:.1f} mm")
+            derived = write_chain_input(input_file, folder, name, L_used, T, stator, D)
+            try:
+                row, res, rep = fascia_pass(derived, folder, stator_on, skip_extras, procs=procs)
+            except FanFailed as e:
+                err = e
+                attempt_failed(err, n, L_used, k)
+                continue
+            fan["D"] = D
+            row.update(tentativo_ventola=k, esito="ok", D_ventola_fissato_mm=1e3 * D,
+                       D_ventola_adattato_da_mm=1e3 * fan["D0"])
+            say(f"  ventola progettata con D = {1e3 * D:.1f} mm: diametro tenuto per il resto "
+                "della catena")
+            return row, res, rep
+        raise RuntimeError(
+            f"ventola non progettabile nemmeno al diametro massimo ammesso dagli input: "
+            f"D = {1e3 * err.D:.2f} mm (massimo {1e3 * D_max:.2f} mm), dp = {err.dp:.1f} Pa, "
+            f"portata = {1e3 * err.Q:.2f} L/s. Rivedere VENTOLA (profili, pale, giri, mozzo) o "
+            "gli ingombri (D_ext_max, gap_parete).")
 
     def record(row, upd, n, L_used):
         row.update(iterazione=n, L_disk_m=L_used, L_disk_nuovo_m=upd["L_disk_nuovo_m"],
@@ -652,9 +750,8 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
         last = it >= n_max
         print(f"\n--- {name}: band pass {it}/{n_max}, L_disk = {1e3 * L:.2f} mm"
               f"{'' if last else ' (venturi without alternatives/exit scan)'} ---")
-        derived = write_chain_input(input_file, folder, name, L, T, stator)
         try:
-            row, res, _ = fascia_pass(derived, folder, stator_on, not last, procs=procs)
+            row, res, _ = run_pass(L, not last, None, it)
         except (RuntimeError, ValueError, KeyError) as e:
             return fail(e, it, L)
         upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
@@ -666,9 +763,8 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
         if upd["convergito"] and row["skip_extras"]:
             # converged on a pass without alternatives/exit scan: venturi again, with them
             print("  band converged: final venturi pass with alternatives and exit scan")
-            derived = write_chain_input(input_file, folder, name, L, T, stator)
             try:
-                row, res, _ = fascia_pass(derived, folder, stator_on, False, prev, procs=procs)
+                row, res, _ = run_pass(L, False, prev, it + 1)
             except (RuntimeError, ValueError, KeyError) as e:
                 return fail(e, it + 1, L)
             upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
@@ -701,8 +797,10 @@ def run_chain(input_file: str, case_root: str, folder: str, label, stator, sis: 
     rows = _read_json(folder, "fascia.json") or []
     ok = [r for r in rows if "errore" not in r]
     L = ok[-1]["L_disk_m"] if ok else float(inputs["VENTURI"]["L_disk"])
+    D_fan = ok[-1].get("D_ventola_fissato_mm") if ok else None
     prepare_chain(case_root, folder)
-    derived = write_chain_input(input_file, folder, name, L, thrust_value(inputs, case_root), stator)
+    derived = write_chain_input(input_file, folder, name, L, thrust_value(inputs, case_root), stator,
+                                None if D_fan is None else 1e-3 * D_fan)
     if only == "venturi":
         return run_venturi(derived, os.path.join(folder, "2_venturi"), **_kw(procs))
     if only == "ventola":
@@ -748,7 +846,12 @@ def write_summary(input_file: str, results_dir=None) -> None:
         lines += [f"- fascia della ventola: L_disk {last['L_disk_m'] * 1e3:.2f} mm dopo "
                   f"{len(fascia)} passate, "
                   f"{'convergita' if last['convergito'] else '**NON convergita**'} "
-                  f"(`{pre}fascia.json`)", ""]
+                  f"(`{pre}fascia.json`)"]
+        if last.get("D_ventola_adattato_da_mm") is not None:
+            lines.append(f"- Diametro ventola adattato: {last['D_ventola_adattato_da_mm']:.1f} -> "
+                         f"{last['D_ventola_fissato_mm']:.1f} mm (la ventola non era progettabile "
+                         "con il diametro scelto dal venturi)")
+        lines.append("")
     if m:
         lines += ["## In breve", "",
                   f"- **picco di potenza {m['picco_W']:.3f} W** all'albero per faccia "

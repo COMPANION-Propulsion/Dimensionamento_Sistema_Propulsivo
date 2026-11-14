@@ -106,6 +106,12 @@ e senza un vincolo di lunghezza minima l'attrito spinge a accorciare. Atteso dal
 - Se ricompare `No module named 'venturi'`, la cache Numba è vecchia: eliminare i `.nbi`/`.nbc`.
 - Nella shell i blocchi lunghi con `'''` si rompono: usare un file di script.
 
+**Aggiornamento 2026-11-14.** `VENTURI["D_ventola"]` vale anche per l'ottimizzazione di forma
+(`griglia+forma`, `slsqp`): numero [m] o `"max"` (massimo da `inlet_radius_limit` e `R_int_max`,
+`cli.resolve_fan_diameter`) tengono fisso `R_disk` (`PropulsionCase.R_disk_fisso`: in `optimise` la
+variabile `x[-3]` è tolta dal vettore di SLSQP); `None` = libero come prima. `../run_sistema.py`
+la usa per la ventola adattiva: se la ventola fallisce rifà il venturi con D crescente fino al massimo.
+
 ## Revisione 2026-11-07 (richiesta in 7 punti)
 
 - Spinta: T = Σ(ρF²/A + (p − p_amb)A) − ρQV0 all'uscita (termine di pressione 0 per la condizione

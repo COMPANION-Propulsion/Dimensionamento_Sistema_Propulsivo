@@ -326,6 +326,12 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
              log: Optional[str] = None, verbose: bool = True) -> OptResult:
     """Largest thrust with SLSQP. All variables and functions are scaled."""
     case, lay = problem.case, problem.layout
+    R_fixed = case.R_disk_fisso
+    if R_fixed is not None:
+        # fan diameter imposed: the disk radius is held (lo = hi), the rest of the shape stays free
+        d0 = d0.copy()
+        d0[-3] = R_fixed
+        d0[:-3] = np.clip(d0[:-3], R_fixed, case.R_int_max)
     # variables scaled to order one: radii by R_int_max, lengths by L_max
     scale = np.r_[np.full(d0.size - 2, case.R_int_max), case.L_max, case.L_max]
     T0 = problem.values(d0)["thrust"]
@@ -403,11 +409,26 @@ def optimise(problem: DuctProblem, d0: np.ndarray, max_iter: int = 40, ftol: flo
 
     lo = np.r_[np.full(d0.size - 2, case.R_min), 0.05 * case.L_max, 0.05 * case.L_max] / scale
     hi = np.r_[np.full(d0.size - 2, case.R_int_max), case.L_max, case.L_max] / scale
-    cons = [dict(type="ineq", fun=lambda u: problem.geometric(u * scale),
-                 jac=lambda u: problem.geometric_jac(u * scale) * scale),
-            dict(type="ineq", fun=flow_con, jac=flow_jac)]
-    res = minimize(objective, d0 / scale, jac=objective_grad, method="SLSQP",
-                   bounds=list(zip(lo, hi)), constraints=cons, callback=record,
+    # Fixed fan diameter: SLSQP works on the free variables only (R_disk taken out of the
+    # vector, not held by lo = hi bounds); without it every variable is free, as before.
+    free = np.ones(d0.size, dtype=bool)
+    if R_fixed is not None:
+        free[-3] = False
+    u_held = d0 / scale
+
+    def full(v):
+        u = u_held.copy()
+        u[free] = v
+        return u
+
+    cons = [dict(type="ineq", fun=lambda v: problem.geometric(full(v) * scale),
+                 jac=lambda v: (problem.geometric_jac(full(v) * scale) * scale)[:, free]),
+            dict(type="ineq", fun=lambda v: flow_con(full(v)),
+                 jac=lambda v: flow_jac(full(v)).reshape(-1, d0.size)[:, free])]
+    res = minimize(lambda v: objective(full(v)), u_held[free],
+                   jac=lambda v: objective_grad(full(v))[free], method="SLSQP",
+                   bounds=list(zip(lo[free], hi[free])), constraints=cons,
+                   callback=lambda v: record(full(v)),
                    options=dict(maxiter=max_iter, ftol=ftol))
     feasible = best["T"] > -math.inf
     d_best = best["d"] if feasible else least["d"]

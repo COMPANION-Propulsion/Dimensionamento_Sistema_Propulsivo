@@ -97,6 +97,7 @@ class PropulsionCase:
     Nr: int = 26
     wall_clustering: float = 3.5     # keeps y+ below 5 on every grid level
     throat_refine: float = 3.0
+    R_disk_fisso: Optional[float] = None  # disk radius held by the shape optimisation [m], None = free
 
     rho: float = field(init=False)
     mu: float = field(init=False)
