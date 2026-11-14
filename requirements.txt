@@ -6,6 +6,7 @@
 numpy==2.5.3
 scipy==1.18.1
 numba==0.67.0          # kernels of the venturi flow solver
+pypardiso==0.4.7       # PARDISO linear solver of the venturi Newton/adjoint (needs MKL)
 
 # --- output -----------------------------------------------------------------
 matplotlib==3.11.1     # .svg figures

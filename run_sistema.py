@@ -44,12 +44,25 @@ in risultati/<nome>/<etichetta>/ with its own input_usato.py, RIEPILOGO.md and m
 has RIEPILOGO.md and confronto_casi.xlsx in risultati/<nome>/. A failing case does not stop the
 others. --solo applies to every case; --solo masse rewrites the mass workbooks only; --elenca
 prints the cases and their labels without running anything.
+
+Processes. SISTEMA["processi"] is a cap on the TOTAL number of processes of the run (None =
+automatic: min(physical cores, floor(0.6 x free RAM / 1.5 GB)), at least 1). The cap is a budget
+split going inwards, see venturi_designer/parallel.py: a level with several independent jobs (the
+cases of a series, then the Statore/NoStatore chains, then the scan cases, the alternatives and the
+exit scan of the venturi, the grid study "jobs" and the fan "jobs") takes min(jobs, budget)
+processes and gives each of them budget // that. Inside a process that was given 1, everything
+runs in sequence. With processi = 1 nothing runs in parallel: the plain sequential code, each scan
+case starting warm from the previous one. In parallel each scan / sweep case starts cold instead
+(same results within the solver tolerance). Each chain or case run in its own process writes its
+screen output to log.txt in its folder; the screen shows start, end and exit code of each one, and
+the traceback of an error.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import copy
 import hashlib
 import importlib.util
@@ -59,7 +72,9 @@ import os
 import re
 import shutil
 import sys
+import time
 import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE = os.path.join(ROOT, "input.py")
@@ -81,9 +96,22 @@ FAN_DEFAULTS = {
     "margine_fascia_m": 0.001, "fascia_min_m": None,     # band loop: read by run_sistema.py only
 }
 SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3, "combinazioni": "tutte",
-                    "densita_kg_m3": 1240.0, "riempimento": 1.0}
+                    "densita_kg_m3": 1240.0, "riempimento": 1.0, "processi": None}
+PARALLEL_SOLO = (None,) + STEPS[1:]      # --solo values whose chains / cases may run in parallel
 COMBINATIONS = ("tutte", "accoppiate")
 VARIANTS = (("Statore", True), ("NoStatore", False))
+
+
+def parallel_module():
+    """venturi_designer/parallel.py (the rule of the processes), loaded by path: no solver import."""
+    name = "venturi_parallel"
+    if name not in sys.modules:
+        path = os.path.join(ROOT, "1_venturi", "venturi_designer", "parallel.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
 def run_spinta(input_file: str, results_dir=None) -> int:
@@ -334,14 +362,16 @@ def write_series_summary_md(plan: dict, rows: list) -> str:
     return path
 
 
-def run_venturi(input_file: str, output_dir=None, skip_extras: bool = False) -> int:
+def run_venturi(input_file: str, output_dir=None, skip_extras: bool = False, procs=None) -> int:
     """Venturi on `input_file`; output_dir = the 2_venturi folder of the chain.
 
-    skip_extras (True: no alternatives and no exit scan) is read by cli with getattr.
+    skip_extras (True: no alternatives, no exit scan, no grid study) and procs (the budget of
+    processes of this chain, None = as always) are read by cli with getattr.
     """
     from venturi_designer.cli import run_target_thrust
     return run_target_thrust(argparse.Namespace(input=input_file, output_dir=output_dir,
-                                                no_export=False, skip_extras=skip_extras))
+                                                no_export=False, skip_extras=skip_extras,
+                                                procs=procs))
 
 
 def fan_input(input_file: str, root: str = None) -> str:
@@ -394,8 +424,22 @@ def fan_input(input_file: str, root: str = None) -> str:
     return path
 
 
-def run_ventola(input_file: str, root: str = None) -> int:
-    """Fan sizing (rotor + stator + CAD) of the chain in `root`; the extras are in ventola_extras."""
+FAN_AUTO_JOBS = 4           # most processes of the fan when VENTOLA["jobs"] is None (optimizer.py)
+
+
+def fan_jobs(jobs, procs):
+    """--jobs of the fan under the budget `procs` (None = no budget: VENTOLA["jobs"] as written)."""
+    if procs is None:
+        return jobs
+    if jobs:
+        return min(int(jobs), procs)
+    return procs if procs < FAN_AUTO_JOBS else None      # None: the fan chooses (4 at most)
+
+
+def run_ventola(input_file: str, root: str = None, procs=None) -> int:
+    """Fan sizing (rotor + stator + CAD) of the chain in `root`; the extras are in ventola_extras.
+
+    procs = budget of processes of the chain: the fan "jobs" never exceed it."""
     from spinta_designer import caso
     from ventola_designer.optimizer import main as size_main
     try:
@@ -403,7 +447,7 @@ def run_ventola(input_file: str, root: str = None) -> int:
     except ValueError as e:
         print(f"Error: {e}")
         return 1
-    jobs = caso.load_input(input_file)["VENTOLA"].get("jobs")
+    jobs = fan_jobs(caso.load_input(input_file)["VENTOLA"].get("jobs"), procs)
     print(f"Fan input: {caso.shown(path)}")
     try:
         return int(size_main(["--input", path] + (["--jobs", str(jobs)] if jobs else [])))
@@ -508,22 +552,30 @@ def prepare_chain(case_root: str, folder: str) -> None:
         shutil.copyfile(src, dst)
 
 
-def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, prev=None):
+def _kw(procs) -> dict:
+    """procs as a keyword only when there is a budget (the steps are called as before without)."""
+    return {} if procs is None else {"procs": procs}
+
+
+def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, prev=None,
+                procs=None):
     """One venturi + fan pass; returns (row without the update, risultati dict, report dict).
 
     prev = (dp, D) of the previous venturi: when the venturi gives the same duct again (the
-    final pass with the extras) the fan is not repeated.
+    final pass with the extras) the fan is not repeated. skip_extras passes have no grid study
+    (their dp is the secant on the finest grid from the dp of the optimisation grid, so it does
+    not repeat to the last digit in the final pass: the fan is then run again).
     """
     from sistema_designer.fascia import band_need
     venturi_dir = os.path.join(folder, "2_venturi")
-    rc = run_venturi(derived, venturi_dir, skip_extras)
+    rc = run_venturi(derived, venturi_dir, skip_extras, **_kw(procs))
     if rc != 0:
         raise RuntimeError(f"venturi failed (code {rc})")
     res = _read_json(venturi_dir, "00_sintesi", "risultati.json")
     dp, D = res["ventola"]["dp_disk_Pa"], res["ventola"]["D_ventola_m"]
     reused = bool(prev) and abs(dp - prev[0]) <= 1e-6 * abs(prev[0]) and abs(D - prev[1]) <= 1e-9
     if not reused:
-        rc = run_ventola(derived, folder)
+        rc = run_ventola(derived, folder, **_kw(procs))
         if rc != 0:
             raise RuntimeError(f"fan failed (code {rc})")
     rep = _read_json(folder, "3_ventola", "00_sintesi", "report.json")
@@ -536,8 +588,11 @@ def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, p
                 fonte_ingombro=need["fonte"]), res, rep
 
 
-def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis: dict) -> int:
-    """Venturi + fan repeated until L_disk fits the real fan. 0 = done, else failing code."""
+def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis: dict,
+                procs=None) -> int:
+    """Venturi + fan repeated until L_disk fits the real fan. 0 = done, else failing code.
+
+    procs = budget of processes of this chain (see the module docstring), None = unmanaged."""
     from sistema_designer.fascia import update_band, write_json
     from spinta_designer import caso
     inputs = caso.load_input(input_file)
@@ -571,7 +626,7 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
               f"{'' if last else ' (venturi without alternatives/exit scan)'} ---")
         derived = write_chain_input(input_file, folder, name, L, T, stator)
         try:
-            row, res, _ = fascia_pass(derived, folder, stator_on, not last)
+            row, res, _ = fascia_pass(derived, folder, stator_on, not last, procs=procs)
         except (RuntimeError, ValueError, KeyError) as e:
             return fail(e, it, L)
         upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
@@ -585,7 +640,7 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
             print("  band converged: final venturi pass with alternatives and exit scan")
             derived = write_chain_input(input_file, folder, name, L, T, stator)
             try:
-                row, res, _ = fascia_pass(derived, folder, stator_on, False, prev)
+                row, res, _ = fascia_pass(derived, folder, stator_on, False, prev, procs=procs)
             except (RuntimeError, ValueError, KeyError) as e:
                 return fail(e, it + 1, L)
             upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
@@ -600,12 +655,15 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
         L = upd["L_disk_nuovo_m"]
 
 
-def run_chain(input_file: str, case_root: str, folder: str, label, stator, sis: dict, only=None) -> int:
-    """One chain: band loop (venturi + fan) and sistema; `only` = a single step, no loop."""
+def run_chain(input_file: str, case_root: str, folder: str, label, stator, sis: dict, only=None,
+              procs=None) -> int:
+    """One chain: band loop (venturi + fan) and sistema; `only` = a single step, no loop.
+
+    procs = budget of processes of this chain (None = unmanaged, as before)."""
     from spinta_designer import caso
     name = label or "case"
     if only is None:
-        rc = fascia_loop(input_file, case_root, folder, label, stator, sis)
+        rc = fascia_loop(input_file, case_root, folder, label, stator, sis, procs)
         if rc != 0:
             return rc
         ventola_extras(folder)
@@ -618,9 +676,9 @@ def run_chain(input_file: str, case_root: str, folder: str, label, stator, sis: 
     prepare_chain(case_root, folder)
     derived = write_chain_input(input_file, folder, name, L, thrust_value(inputs, case_root), stator)
     if only == "venturi":
-        return run_venturi(derived, os.path.join(folder, "2_venturi"))
+        return run_venturi(derived, os.path.join(folder, "2_venturi"), **_kw(procs))
     if only == "ventola":
-        rc = run_ventola(derived, folder)
+        rc = run_ventola(derived, folder, **_kw(procs))
         if rc == 0:
             ventola_extras(folder)
         return rc
@@ -797,10 +855,146 @@ def run_confronto(root: str) -> int:
     return 0
 
 
-def run_case(input_file: str, solo=None, results_dir=None) -> int:
+# ---------------------------------------------------------------------------
+# jobs in worker processes: one chain or one case each, output in its own log.txt
+# ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def redirect_output(path: str):
+    """Everything this process prints (sys.stdout / sys.stderr and the file descriptors 1 and 2,
+    so also its child processes) goes to the file `path` until the block ends."""
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    log = open(path, "w", encoding="utf-8", errors="replace", buffering=1)
+    old = (sys.stdout, sys.stderr)
+    saved = None
+    try:
+        saved = (os.dup(1), os.dup(2))
+        os.dup2(log.fileno(), 1)
+        os.dup2(log.fileno(), 2)
+    except OSError:                    # no usable descriptors: the Python streams only
+        saved = None
+    sys.stdout = sys.stderr = log
+    try:
+        yield
+    finally:
+        try:
+            log.flush()
+        except Exception:
+            pass
+        sys.stdout, sys.stderr = old
+        if saved is not None:
+            os.dup2(saved[0], 1)
+            os.dup2(saved[1], 2)
+            os.close(saved[0])
+            os.close(saved[1])
+        log.close()
+
+
+def _chain_job(input_file, case_root, folder, label, stator, sis, only, procs) -> int:
+    """One chain (what the sequential loop of run_case does for it); returns its code."""
+    print("\n" + "#" * 66 + f"\n#  CHAIN {label or 'CASE'}"
+          + (f" (stator {'yes' if stator else 'no'})" if label else "") + "\n" + "#" * 66)
+    try:
+        rc = run_chain(input_file, case_root, folder, label, stator, sis, only, procs)
+    except ValueError as e:
+        print(f"Error: {e}")
+        rc = 1
+    if rc not in (0, 3):
+        print(f"\nChain {label or 'case'} failed (code {rc}).")
+    return rc
+
+
+def _case_job(input_file, case, axes, plan_root, solo, procs, index, total) -> int:
+    """One case of a series (what the sequential loop of run_series does for it)."""
+    print("\n" + "=" * 66 + f"\n=  CASE {index}/{total}: {case['label']}\n" + "=" * 66)
+    rc = 1
+    try:
+        case_input = write_case_input(input_file, case["folder"], case["label"], axes, case["combo"])
+        rc = run_case(case_input, solo, plan_root, procs)
+    except Exception as e:             # a failing case is recorded, the series goes on
+        print(f"Case {case['label']} failed: {e}")
+        traceback.print_exc()
+        rc = 1
+    if rc not in (0, 3):
+        print(f"\nCase {case['label']} failed (code {rc}).")
+    return rc
+
+
+_JOBS = {"chain": "_chain_job", "case": "_case_job"}
+
+
+def logged_job(payload) -> dict:
+    """Worker process: run the job `name` with its output in the log file.
+
+    payload = (name, kwargs, log path, label). Returns dict(rc, error, seconds); an exception
+    of the job is written in the log and returned as text, never raised.
+    """
+    name, kwargs, log_path, label = payload
+    print(f"[{label}] inizio (log: {log_path})", flush=True)
+    t0 = time.time()
+    rc, error = 1, None
+    with redirect_output(log_path):
+        try:
+            rc = int(globals()[_JOBS[name]](**kwargs))
+        except BaseException:          # includes SystemExit: reported, not lost
+            error = traceback.format_exc()
+            print(error)
+    return dict(rc=rc, error=error, seconds=time.time() - t0)
+
+
+def _log_tail(path: str, n: int = 12) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return "".join(fh.readlines()[-n:])
+    except OSError:
+        return ""
+
+
+def run_jobs(jobs: list, workers: int, on_done=None, executor=None) -> list:
+    """The jobs (dicts name, kwargs, log, label) in `workers` processes; results in order.
+
+    The screen gets start and end (exit code) of each job and the traceback of an error;
+    everything else is in the log of the job. on_done(index, result) after each job ends.
+    `executor` = pool class (default ProcessPoolExecutor; a test may pass a fake one).
+    """
+    executor = executor or ProcessPoolExecutor
+    results = [None] * len(jobs)
+    with executor(max_workers=workers) as pool:
+        futures = {pool.submit(logged_job, (j["name"], j["kwargs"], j["log"], j["label"])): i
+                   for i, j in enumerate(jobs)}
+        for fut in as_completed(futures):
+            i = futures[fut]
+            try:
+                res = fut.result()
+            except BaseException:      # the worker died (memory?) or the job could not be sent
+                res = dict(rc=1, error=traceback.format_exc(), seconds=None)
+            results[i] = res
+            j = jobs[i]
+            took = "" if res["seconds"] is None else f", {res['seconds']:.0f} s"
+            print(f"[{j['label']}] fine, codice {res['rc']} ({status_text(res['rc'])}){took}",
+                  flush=True)
+            if res["error"]:
+                print(f"[{j['label']}] ERRORE:\n{res['error']}", flush=True)
+            elif res["rc"] not in (0, 3):
+                tail = _log_tail(j["log"])
+                if tail:
+                    print(f"[{j['label']}] ultime righe di {j['log']}:\n{tail}", flush=True)
+            if on_done:
+                on_done(i, res)
+    return results
+
+
+def run_case(input_file: str, solo=None, results_dir=None, procs=None) -> int:
     """One case (a plain input.py, or one case of a series): the whole chain or one step.
 
     results_dir = folder that holds the case folder (default risultati/).
+    procs = budget of processes of this case (see the module docstring); None = unmanaged
+    (sequential, as before). The Statore/NoStatore chains run in parallel when the budget allows.
     """
     from spinta_designer import caso
     if solo == "riepilogo":
@@ -828,17 +1022,21 @@ def run_case(input_file: str, solo=None, results_dir=None) -> int:
     if args.solo != "spinta":
         root = caso.case_dir(args.input, results_dir)
         results = []
-        for label, folder, stator in chains(root, sis):
-            print("\n" + "#" * 66 + f"\n#  CHAIN {label or 'CASE'}"
-                  + (f" (stator {'yes' if stator else 'no'})" if label else "") + "\n" + "#" * 66)
-            try:
-                rc = run_chain(args.input, root, folder, label, stator, sis, args.solo)
-            except ValueError as e:
-                print(f"Error: {e}")
-                rc = 1
-            if rc not in (0, 3):
-                print(f"\nChain {label or 'case'} failed (code {rc}).")
-            results.append(rc)
+        chain_list = chains(root, sis)
+        workers, child = parallel_module().split_budget(len(chain_list), procs) if procs else (1, None)
+        if workers > 1 and args.solo in PARALLEL_SOLO:
+            jobs = [dict(name="chain", label=label or "case", log=os.path.join(folder, "log.txt"),
+                         kwargs=dict(input_file=args.input, case_root=root, folder=folder,
+                                     label=label, stator=stator, sis=sis, only=args.solo,
+                                     procs=child))
+                    for label, folder, stator in chain_list]
+            print(f"\n{len(jobs)} chains in {workers} processes ({child} each, budget {procs}): "
+                  "output in <chain>/log.txt")
+            results = [r["rc"] for r in run_jobs(jobs, workers)]
+        else:
+            for label, folder, stator in chain_list:
+                results.append(_chain_job(args.input, root, folder, label, stator, sis, args.solo,
+                                          child))
         if sis["confronto_statore"] and args.solo is None:
             print("\n" + "#" * 66 + "\n#  CONFRONTO STATORE\n" + "#" * 66)
             run_confronto(root)
@@ -853,24 +1051,43 @@ def run_case(input_file: str, solo=None, results_dir=None) -> int:
     return 0
 
 
-def run_series(input_file: str, plan: dict, solo=None) -> int:
-    """Every case of the series as a complete chain in plan['root']/<label>/; none stops the others."""
+def run_series(input_file: str, plan: dict, solo=None, procs=None) -> int:
+    """Every case of the series as a complete chain in plan['root']/<label>/; none stops the others.
+
+    procs = budget of processes (None = sequential, as before). The cases run in parallel
+    (min(cases, budget) at a time, each with budget // that for its own chains) except for
+    --solo steps that calculate nothing; each case writes its output to <case>/log.txt.
+    """
+    cases = plan["cases"]
+    total = len(cases)
     rows = []
-    for i, c in enumerate(plan["cases"], 1):
-        print("\n" + "=" * 66 + f"\n=  CASE {i}/{len(plan['cases'])}: {c['label']}\n" + "=" * 66)
-        rc = 1
-        try:
-            case_input = write_case_input(input_file, c["folder"], c["label"], plan["axes"], c["combo"])
-            rc = run_case(case_input, solo, plan["root"])
-        except Exception as e:             # a failing case is recorded, the series goes on
-            print(f"Case {c['label']} failed: {e}")
-            traceback.print_exc()
-            rc = 1
-        if rc not in (0, 3):
-            print(f"\nCase {c['label']} failed (code {rc}).")
-        rows.append(dict(label=c["label"], folder=c["folder"], rc=rc))
-        write_series_summary_md(plan, rows + [dict(label=x["label"], folder=x["folder"], rc=None)
-                                              for x in plan["cases"][i:]])
+    workers, child = parallel_module().split_budget(total, procs) if procs else (1, None)
+    if workers > 1 and solo in PARALLEL_SOLO:
+        codes = {}
+
+        def table():
+            return [dict(label=c["label"], folder=c["folder"], rc=codes.get(i))
+                    for i, c in enumerate(cases)]
+
+        jobs = [dict(name="case", label=c["label"], log=os.path.join(c["folder"], "log.txt"),
+                     kwargs=dict(input_file=input_file, case=c, axes=plan["axes"],
+                                 plan_root=plan["root"], solo=solo, procs=child, index=i, total=total))
+                for i, c in enumerate(cases, 1)]
+        print(f"\n{total} cases in {workers} processes ({child} each, budget {procs}): "
+              "output in <case>/log.txt")
+
+        def done(i, res):
+            codes[i] = res["rc"]
+            write_series_summary_md(plan, table())
+
+        run_jobs(jobs, workers, on_done=done)
+        rows = table()
+    else:
+        for i, c in enumerate(cases, 1):
+            rc = _case_job(input_file, c, plan["axes"], plan["root"], solo, child, i, total)
+            rows.append(dict(label=c["label"], folder=c["folder"], rc=rc))
+            write_series_summary_md(plan, rows + [dict(label=x["label"], folder=x["folder"], rc=None)
+                                                  for x in cases[i:]])
     path = write_series_summary_md(plan, rows)
     if solo in (None, "sistema", "masse"):
         sis = {**SISTEMA_DEFAULTS, **plan["raw"].get("SISTEMA", {})}
@@ -883,6 +1100,16 @@ def run_series(input_file: str, plan: dict, solo=None) -> int:
     if not ok:
         return rows[0]["rc"] if rows else 1
     return 0 if len(ok) == len(rows) and 3 not in ok else 3
+
+
+def processes_budget(sis: dict) -> int:
+    """Total number of processes of this run: SISTEMA["processi"], None = automatic."""
+    par = parallel_module()
+    n = par.resolve_processes(sis.get("processi"))
+    free = par.free_ram_bytes()
+    print(f"Processes: {n} at most ({'input.py' if sis.get('processi') else 'automatic'}"
+          + (f", free RAM {free / 2 ** 30:.1f} GB" if free else "") + ")")
+    return n
 
 
 def main(argv=None) -> int:
@@ -913,9 +1140,15 @@ def main(argv=None) -> int:
             print("WARNING: SISTEMA['confronto_statore'] is True: the stator flag of each chain "
                   "overrides VENTOLA['statore']['presente'] of the series.")
         print("\n".join(describe_series(plan)))
-        return run_series(args.input, plan, args.solo)
+        try:
+            procs = processes_budget(sis)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
+        return run_series(args.input, plan, args.solo, procs)
     try:
-        return run_case(args.input, args.solo)
+        procs = processes_budget(load_sistema(args.input))
+        return run_case(args.input, args.solo, procs=procs)
     except ValueError as e:
         print(f"Error: {e}")
         return 1

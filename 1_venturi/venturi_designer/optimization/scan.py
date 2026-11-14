@@ -79,12 +79,92 @@ def half_angles_deg(geom: MorphedGeometry) -> tuple:
             float(np.degrees(np.arctan(max(np.max(-s), 0.0)))))
 
 
+def _candidates(case, layout, R_fan, R_exits, L_diffs, R_in, max_half_angle):
+    """[(row, d)] of every case in the scan order (L_diff outer, R_exit inner).
+
+    d is None for a case that is not solved (outside the size limits or too steep): its row
+    already has the `stato`. Nothing is solved here.
+    """
+    out = []
+    for L_diff in L_diffs:
+        for R_exit in R_exits:
+            row = dict(D_uscita_mm=2e3 * R_exit, L_diffusore_mm=1e3 * L_diff)
+            d = case_shape(case, layout, R_fan, R_exit, L_diff, R_in)
+            if d is None:
+                out.append((dict(row, stato="fuori ingombro"), None))
+                continue
+            g = MorphedGeometry(layout, d)
+            # semiangolo_deg: diverging (diffuser) wall, the one read by export/duct.py;
+            # semiangolo_conv_deg: converging (nozzle) wall
+            row["semiangolo_deg"], row["semiangolo_conv_deg"] = half_angles_deg(g)
+            if row["semiangolo_deg"] > max_half_angle + 1e-6:
+                out.append((dict(row, stato=f"semiangolo divergente {row['semiangolo_deg']:.1f} > "
+                                            f"{max_half_angle:g} gradi (diffusore)"), None))
+                continue
+            if row["semiangolo_conv_deg"] > MAX_CONV_HALF_ANGLE + 1e-6:
+                out.append((dict(row, stato=f"semiangolo convergente {row['semiangolo_conv_deg']:.1f} > "
+                                            f"{MAX_CONV_HALF_ANGLE:g} gradi (ugello)"), None))
+                continue
+            out.append((row, d))
+    return out
+
+
+def solve_candidate(case, layout, d, curve, P_max, row, prev_sol=None):
+    """Solve one case of the scan. Returns (row, problem, sol): problem and sol are None when
+    the case is discarded (the row then carries the reason)."""
+    from ..export.fields import duct_fields
+    problem = DuctProblem(case, layout)
+    if prev_sol is not None:
+        problem.warm_start(prev_sol)
+    try:
+        if curve is not None:
+            problem, op = operating_point(problem, d, curve, dp0=None)
+            row.update(dp_Pa=op["dp_Pa"], Q_m3_s=op["Q_m3_s"], potenza_W=op["potenza_W"])
+        sol = problem.solve(d)
+        if not sol.converged:
+            raise RuntimeError("flusso non convergente")
+    except (RuntimeError, ValueError) as exc:
+        return dict(row, stato=f"scartato: {exc}"), None, None
+    g = MorphedGeometry(layout, d)
+    r = report(problem, d)
+    w = duct_fields(problem, d)["wall"]
+    row.update(stato="ok", spinta_N=r["thrust"], dp_Pa=problem.case.dp_disk, Q_m3_s=r["Q"],
+               potenza_W=r["Q"] * problem.case.dp_disk, L_tubo_mm=1e3 * r["L_tube"],
+               tau_w_min_diffusore_Pa=float(np.min(w["tau_w"][w["z"] > g.z_b])),
+               celle_invertite=r["reversed_cells"])
+    if row["tau_w_min_diffusore_Pa"] < 0.0:
+        # parete del diffusore con flusso di ritorno: la spinta di una forma separata
+        # non è affidabile (e il modello 2D non la segue bene), il caso non si sceglie
+        row["stato"] = "separato (tau_w < 0 nel diffusore)"
+    elif P_max is not None and row["potenza_W"] > P_max:
+        row["stato"] = f"potenza > {P_max:g} W"
+    return row, problem, sol
+
+
+def scan_worker(payload):
+    """Process pool job: one case of the scan from a cold start. Returns its row only (the
+    flow solution is not sent back; the parent solves the chosen case again)."""
+    case, layout, d, curve, P_max, row = payload
+    return solve_candidate(case, layout, d, curve, P_max, row)[0]
+
+
+def _print_row(row, t0):
+    print(f"  D_exit {row['D_uscita_mm']:5.1f} mm, L_diff {row['L_diffusore_mm']:5.1f} mm, "
+          f"{row['semiangolo_deg']:.2f} deg div / {row['semiangolo_conv_deg']:.2f} deg conv -> T {row['spinta_N']:.5f} N, dp {row['dp_Pa']:.2f} Pa, "
+          f"tau_w min {row['tau_w_min_diffusore_Pa']:+.4f} Pa [{time.time()-t0:.0f} s]"
+          + ("" if row["stato"] == "ok" else f"  -> {row['stato']}"), flush=True)
+
+
 def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[FanCurve],
              D_fan: Optional[float], n_D: int = 5, n_L: int = 4, max_half_angle: float = 4.0,
              P_max: Optional[float] = None, out_dir: Optional[str] = None,
-             verbose: bool = True) -> Dict:
-    """Solve all the cases; return the table and the best one (problem solved, design)."""
-    from ..export.fields import duct_fields
+             verbose: bool = True, procs: int = 1) -> Dict:
+    """Solve all the cases; return the table and the best one (problem solved, design).
+
+    procs = 1: one process, each case starts warm from the flow of the previous one that
+    converged. procs > 1: the cases are solved in `procs` processes, each one from a cold start
+    (the START_FLOW sequence of DuctProblem), the same table and the same rule for the best case.
+    """
     case = for_grid(case, *grid)
     R_in = min(inlet_radius_limit(case), case.R_int_max)
     R_fan = 0.5 * D_fan if D_fan else R_in
@@ -94,61 +174,51 @@ def run_scan(case: PropulsionCase, layout: MorphLayout, grid, curve: Optional[Fa
     R_exits = np.linspace(0.92 * R_fan, case.R_int_max, n_D)
     L_room = case.L_max - bell_envelope(R_in, case.spessore_parete, case.raggio_bocca_su_D)[1] - layout.L_section - R_fan
     L_diffs = np.linspace(0.15, 0.6, n_L) * L_room
+    cands = _candidates(case, layout, R_fan, R_exits, L_diffs, R_in, max_half_angle)
     rows: List[Dict] = []
     best = None
-    prev_sol = None
     t0 = time.time()
-    for L_diff in L_diffs:
-        for R_exit in R_exits:
-            row = dict(D_uscita_mm=2e3 * R_exit, L_diffusore_mm=1e3 * L_diff)
-            d = case_shape(case, layout, R_fan, R_exit, L_diff, R_in)
+    todo = [i for i, (_, d) in enumerate(cands) if d is not None]
+    if procs > 1 and len(todo) > 1:
+        from ..parallel import map_ordered
+
+        def done(k, r):
+            if "spinta_N" in r:
+                _print_row(r, t0)
+
+        if verbose:
+            print(f"  {len(todo)} cases in {min(procs, len(todo))} processes, each from a cold start",
+                  flush=True)
+        solved = map_ordered(scan_worker,
+                             [(case, layout, cands[i][1], curve, P_max, cands[i][0]) for i in todo],
+                             procs, on_done=done if verbose else None)
+        by_index = dict(zip(todo, solved))
+        best_i = None
+        for i, (row, _) in enumerate(cands):
+            row = by_index.get(i, row)
+            rows.append(row)
+            if row["stato"] == "ok" and (best_i is None or row["spinta_N"] > rows[best_i]["spinta_N"]):
+                best_i = i
+        if best_i is not None:
+            row, d = rows[best_i], cands[best_i][1]
+            # the flow of the chosen case is solved again here (same cold start, same dp)
+            problem = DuctProblem(replace(case, dp_disk=row["dp_Pa"]), layout)
+            if not problem.solve(d).converged:
+                raise RuntimeError("the chosen case of the scan did not converge again")
+            best = (row, problem, d)
+    else:
+        prev_sol = None
+        for row, d in cands:
             if d is None:
-                rows.append(dict(row, stato="fuori ingombro"))
+                rows.append(row)
                 continue
-            g = MorphedGeometry(layout, d)
-            # semiangolo_deg: diverging (diffuser) wall, the one read by export/duct.py;
-            # semiangolo_conv_deg: converging (nozzle) wall
-            row["semiangolo_deg"], row["semiangolo_conv_deg"] = half_angles_deg(g)
-            if row["semiangolo_deg"] > max_half_angle + 1e-6:
-                rows.append(dict(row, stato=f"semiangolo divergente {row['semiangolo_deg']:.1f} > "
-                                            f"{max_half_angle:g} gradi (diffusore)"))
-                continue
-            if row["semiangolo_conv_deg"] > MAX_CONV_HALF_ANGLE + 1e-6:
-                rows.append(dict(row, stato=f"semiangolo convergente {row['semiangolo_conv_deg']:.1f} > "
-                                            f"{MAX_CONV_HALF_ANGLE:g} gradi (ugello)"))
-                continue
-            problem = DuctProblem(case, layout)
-            if prev_sol is not None:
-                problem.warm_start(prev_sol)
-            try:
-                if curve is not None:
-                    problem, op = operating_point(problem, d, curve, dp0=None)
-                    row.update(dp_Pa=op["dp_Pa"], Q_m3_s=op["Q_m3_s"], potenza_W=op["potenza_W"])
-                sol = problem.solve(d)
-                if not sol.converged:
-                    raise RuntimeError("flusso non convergente")
-            except (RuntimeError, ValueError) as exc:
-                rows.append(dict(row, stato=f"scartato: {exc}"))
+            row, problem, sol = solve_candidate(case, layout, d, curve, P_max, row, prev_sol)
+            rows.append(row)
+            if problem is None:
                 continue
             prev_sol = sol
-            r = report(problem, d)
-            w = duct_fields(problem, d)["wall"]
-            row.update(stato="ok", spinta_N=r["thrust"], dp_Pa=problem.case.dp_disk, Q_m3_s=r["Q"],
-                       potenza_W=r["Q"] * problem.case.dp_disk, L_tubo_mm=1e3 * r["L_tube"],
-                       tau_w_min_diffusore_Pa=float(np.min(w["tau_w"][w["z"] > g.z_b])),
-                       celle_invertite=r["reversed_cells"])
-            if row["tau_w_min_diffusore_Pa"] < 0.0:
-                # parete del diffusore con flusso di ritorno: la spinta di una forma separata
-                # non è affidabile (e il modello 2D non la segue bene), il caso non si sceglie
-                row["stato"] = "separato (tau_w < 0 nel diffusore)"
-            elif P_max is not None and row["potenza_W"] > P_max:
-                row["stato"] = f"potenza > {P_max:g} W"
-            rows.append(row)
             if verbose:
-                print(f"  D_exit {row['D_uscita_mm']:5.1f} mm, L_diff {row['L_diffusore_mm']:5.1f} mm, "
-                      f"{row['semiangolo_deg']:.2f} deg div / {row['semiangolo_conv_deg']:.2f} deg conv -> T {row['spinta_N']:.5f} N, dp {row['dp_Pa']:.2f} Pa, "
-                      f"tau_w min {row['tau_w_min_diffusore_Pa']:+.4f} Pa [{time.time()-t0:.0f} s]"
-                      + ("" if row["stato"] == "ok" else f"  -> {row['stato']}"), flush=True)
+                _print_row(row, t0)
             if row["stato"] == "ok" and (best is None or row["spinta_N"] > best[0]["spinta_N"]):
                 best = (row, problem, d)
     out = dict(griglia=f"{grid[0]}x{grid[1]}", D_ventola_mm=2e3 * R_fan,

@@ -256,9 +256,10 @@ def load_case(path: str, T_target: Optional[float] = None):
     return case, inputs
 
 
-def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True):
+def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True, procs=1):
     """Grid scan of the duct (scan.py), then the dp for the thrust when there is no curve
-    (match=False: the scan only, the shape optimisation follows)."""
+    (match=False: the scan only, the shape optimisation follows). procs > 1: the cases of the
+    scan in that many processes, each from a cold start."""
     grid = level["optimise"][-1]
     _, d0 = initial_design(case, inputs.get("n_up", 5), inputs.get("n_down", 8))
     case = replace(case, dp_disk=initial_dp(case, layout, d0))
@@ -271,7 +272,7 @@ def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True):
               "diffusers above ~4-5 deg tend to separate")
     scan = run_scan(case, layout, grid, curve, inputs.get("D_ventola"),
                     inputs.get("scansione_D_uscita", 5), inputs.get("scansione_L_diffusore", 4),
-                    case.semiangolo_max_deg, case.P_max, dirs["convergenza"])
+                    case.semiangolo_max_deg, case.P_max, dirs["convergenza"], procs=procs)
     problem, design = scan.pop("problem"), scan.pop("design")
     b = scan["migliore"]
     print(f"Chosen: D_exit {b['D_uscita_mm']:.1f} mm, diffuser {b['L_diffusore_mm']:.1f} mm, "
@@ -287,9 +288,23 @@ def scan_sizing(case, layout, inputs, level, curve, T, dirs, match=True):
                         converged=True), scan
 
 
+GRID_STUDY_SKIPPED = "studio di griglia solo nella passata finale"
+
+
 def run_target_thrust(args) -> int:
-    """Duct and fan dp for the thrust per nozzle, see the module docstring."""
+    """Duct and fan dp for the thrust per nozzle, see the module docstring.
+
+    args.procs = processes this run may use in all (the budget of run_sistema.py, see
+    parallel.py): scan, alternatives and exit scan split it, the grid study takes
+    min(jobs, procs). Missing (None, e.g. run_venturi.py alone) = as always: sequential, the
+    grid study with VENTURI["jobs"] processes.
+    args.skip_extras = intermediate pass of the fan band: no alternatives, no exit scan, no
+    grid study (the error band is only needed in the final pass); the dp on the finest grid is
+    still computed, with the secant starting from the dp of the optimisation grid.
+    """
     results_dir = getattr(args, "results_dir", None)
+    procs = getattr(args, "procs", None)
+    inner = max(1, int(procs or 1))
     try:
         inputs = load_inputs(args.input)
         T, source = thrust_target(inputs, args.input, results_dir)
@@ -316,12 +331,13 @@ def run_target_thrust(args) -> int:
             print("Fan curve " + ("(FICTITIOUS EXAMPLE)" if curve.fictitious else "")
                   + f": {len(curve.Q)} points, operating point on the curve")
         if mode == "griglia":
-            res, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs)
+            res, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs, procs=inner)
         elif mode == "griglia+forma":
             if curve is not None:
                 raise ValueError("the fan curve works with ottimizzatore = 'griglia' only "
                                  "(the shape optimisation does not support it).")
-            res0, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs, match=False)
+            res0, scan = scan_sizing(case, layout, inputs, level, curve, T, dirs, match=False,
+                                     procs=inner)
             print("\nShape optimisation from the scan design")
             res = size_for_thrust(case, layout, res0.design, level["optimise"],
                                   max_iter=inputs.get("max_iter", 40),
@@ -354,7 +370,8 @@ def run_target_thrust(args) -> int:
                                         level["optimise"][-1],
                                         max_cycles=inputs.get("alternative_max_cicli_dp", 2),
                                         max_iter=inputs.get("max_iter", 40),
-                                        tol_dp=inputs.get("tol_dp", 0.01), out_dir=alt_dir)
+                                        tol_dp=inputs.get("tol_dp", 0.01), out_dir=alt_dir,
+                                        procs=inner)
         print("\n" + alternatives_table(alternatives))
     exit_sweep = None
     n_exit = int(inputs.get("scansione_uscita", 7) or 0) if extras else 0
@@ -362,19 +379,26 @@ def run_target_thrust(args) -> int:
         print(f"\nExit scan, converging to diverging: {n_exit} points around the optimum")
         exit_sweep = run_exit_sweep(case, layout, design, problem, n_exit, level["optimise"][-1],
                                     os.path.join(dirs["convergenza"], "uscita"),
-                                    case.semiangolo_max_deg)
+                                    case.semiangolo_max_deg, procs=inner)
         print("\n" + exit_sweep_table(exit_sweep))
     design_file = save_design(os.path.join(dirs["convergenza"], "design.json"), problem.case,
                               layout, design, report(problem, design))
 
-    print(f"\nGrid convergence, level '{inputs['grid']}'")
-    est = duct_study(design_file, level["verify"], inputs.get("jobs", 3))
-    print(f"Thrust = {est['value']:.5f} +/- {est['error']:.5f} N ({est['error_pct']:.2f} %) "
-          f"at dp = {problem.case.dp_disk:.4f} Pa")
-    if not est["reliable"]:
-        print("WARNING, value not reliable: " + "; ".join(est["problems"]))
-    for note in est.get("notes", []):
-        print("Note on the grid band: " + note)
+    est = None
+    if skip_extras:
+        print(f"\nGrid convergence skipped ({GRID_STUDY_SKIPPED})")
+    else:
+        print(f"\nGrid convergence, level '{inputs['grid']}'")
+        jobs = inputs.get("jobs", 3)
+        if procs is not None:                   # the grid study counts in the cap of processes
+            jobs = max(1, min(int(jobs), inner))
+        est = duct_study(design_file, level["verify"], jobs)
+        print(f"Thrust = {est['value']:.5f} +/- {est['error']:.5f} N ({est['error_pct']:.2f} %) "
+              f"at dp = {problem.case.dp_disk:.4f} Pa")
+        if not est["reliable"]:
+            print("WARNING, value not reliable: " + "; ".join(est["problems"]))
+        for note in est.get("notes", []):
+            print("Note on the grid band: " + note)
 
     Nz, Nr = level["verify"][-1]
     steps = list(res.steps)
@@ -387,7 +411,11 @@ def run_target_thrust(args) -> int:
             rows, k = [dict(tipo="punto di lavoro", **{a: b for a, b in op.items() if a != "passi"})], 1.0
         else:
             # the same thrust on the finest grid: dp scaled with the measured exponent
-            dp = problem.case.dp_disk * (T / est["value"]) ** (1.0 / res.exponent)
+            # (without the grid study: from the dp of the optimisation grid, the secant on the
+            # finest grid converges to the same thrust)
+            dp = problem.case.dp_disk
+            if est is not None:
+                dp *= (T / est["value"]) ** (1.0 / res.exponent)
             print(f"\nFinal dp on the {Nz} x {Nr} grid")
             fine = DuctProblem(for_grid(replace(problem.case, dp_disk=dp), Nz, Nr), layout)
             fine, rows, k = match_thrust(fine, design, T, res.exponent, cycle=0)
@@ -406,11 +434,17 @@ def run_target_thrust(args) -> int:
         print(f"Warning: optimiser history not written ({e})")
     summary = report(fine, design)
     save_design(design_file, fine.case, layout, design, summary)
-    dp_error = fine.case.dp_disk * est["error_pct"] / 100.0 / k
+    if est is None:                              # no error band in this pass
+        dp_error = float("nan")
+        est_info = dict(method="assente", notes=[GRID_STUDY_SKIPPED], problems=[],
+                        reliable=False, saltato=True)
+    else:
+        dp_error = fine.case.dp_disk * est["error_pct"] / 100.0 / k
+        est_info = est
 
     print("\nFiles")
     out = export_duct_results(fine, design, summary, dirs, dict(
-        source=source, estimate=est, dp_error=dp_error, exponent=k, steps=steps,
+        source=source, estimate=est_info, dp_error=dp_error, exponent=k, steps=steps,
         converged=res.converged, scan=scan, curve=curve.to_dict() if curve else None,
         alternatives=alternatives, exit_sweep=exit_sweep, history=history))
     if scan:
@@ -418,13 +452,14 @@ def run_target_thrust(args) -> int:
     r = out["results"]
     print(f"  {len(out['files'])} files in {caso.shown(root)}{os.sep}")
     print("\n" + "=" * 66)
-    print(f"dp disk = {fine.case.dp_disk:.4f} +/- {dp_error:.4f} Pa, fan D = "
+    band = "(error band: final pass only)" if est is None else f"+/- {dp_error:.4f} Pa"
+    print(f"dp disk = {fine.case.dp_disk:.4f} {band}, fan D = "
           f"{r['ventola']['D_ventola_m'] * 1e3:.2f} mm, Q = {r['ventola']['portata_m3_s'] * 1e3:.3f} L/s, "
           f"P = {r['ventola']['potenza_fluido_W']:.4f} W")
     print(f"thrust {summary['thrust']:.5g} N (wanted {T:.5g}), tube {r['geometria']['D_esterno_tubo_mm']:.1f}"
           f" x {r['geometria']['L_tubo_mm']:.1f} mm, {time.time() - t0:.0f} s")
     print("=" * 66)
-    ok = est["reliable"] and r["geometria"]["ingombro_rispettato"]
+    ok = (est is None or est["reliable"]) and r["geometria"]["ingombro_rispettato"]
     if not ok:
         print("Some checks failed: see 00_sintesi/RISULTATO.md")
     return 0 if ok else 3

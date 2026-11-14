@@ -185,12 +185,51 @@ def _solve_one(case, layout, d_opt, L, grid, max_cycles, max_iter, tol_dp, folde
     return first, reason
 
 
+def alternative_row(case, layout, d_opt, L, grid, max_cycles, max_iter, tol_dp, out_dir, ref,
+                    verbose=True) -> Dict:
+    """Row of the alternative at the tube length L (never raises: a failure is a row)."""
+    T = float(case.T_target)
+    id = alt_id(L)
+    folder = os.path.join(out_dir, id)
+    try:
+        if ref["dp_Pa"] is None:
+            raise ValueError("no reference row")
+        if L > case.L_max + 1e-9:
+            return failed_row(id, L, "fuori ingombro (L > L_max)")
+        os.makedirs(folder, exist_ok=True)
+        res, reason = _solve_one(case, layout, d_opt, L, grid, max_cycles, max_iter,
+                                 tol_dp, folder, verbose)
+        if res is None:
+            return failed_row(id, L, reason)
+        row = compare_row(res.problem, res.design, T, ref)
+        row["id"] = id
+        row["convergito"] = bool(res.converged)
+        row["stato"] = "ok" if res.converged else reason
+        dev = abs(row["L_tubo_mm"] - 1e3 * L)
+        if dev > L_CHECK_MM:
+            row["convergito"] = False
+            row["stato"] = f"lunghezza {row['L_tubo_mm']:.1f} mm lontana da quella richiesta"
+        _save_files(folder, out_dir, res.problem, layout, res.design, row)
+        return row
+    except Exception as exc:                   # never raise out of here
+        return failed_row(id, L, f"errore: {exc}")
+
+
+def alternative_worker(payload) -> Dict:
+    """Process pool job: one alternative (quiet; the parent prints one line per row)."""
+    case, layout, d_opt, L, grid, max_cycles, max_iter, tol_dp, out_dir, ref = payload
+    return alternative_row(case, layout, d_opt, L, grid, max_cycles, max_iter, tol_dp, out_dir,
+                           ref, verbose=False)
+
+
 def run_alternatives(case, layout: MorphLayout, d_opt: np.ndarray, ref_problem: DuctProblem,
                      lengths: Sequence[float], grid, max_cycles: int = 2, max_iter: int = 40,
-                     tol_dp: float = 0.01, out_dir: str = ".", verbose: bool = True) -> Dict:
+                     tol_dp: float = 0.01, out_dir: str = ".", verbose: bool = True,
+                     procs: int = 1) -> Dict:
     """Optimum at fixed lengths and the table that compares them with the free optimum.
 
     Writes <out_dir>/alternative.json and one folder per case (design.json, profilo.csv).
+    procs > 1: the lengths are solved in `procs` processes (each one was already independent).
     """
     os.makedirs(out_dir, exist_ok=True)
     T = float(case.T_target)
@@ -201,36 +240,26 @@ def run_alternatives(case, layout: MorphLayout, d_opt: np.ndarray, ref_problem: 
         ref = failed_row("ottimo", None, f"riferimento non valutabile: {exc}")
         ref["dp_Pa"] = ref["potenza_W"] = None
     rows = [ref]
-    for L in lengths:
-        L = float(L)
-        id = alt_id(L)
-        folder = os.path.join(out_dir, id)
+    lengths = [float(L) for L in lengths]
+    if procs > 1 and len(lengths) > 1:
+        from ..parallel import map_ordered
         if verbose:
-            print(f"\nAlternative {id}: tube {1e3 * L:.1f} mm", flush=True)
-        try:
-            if ref["dp_Pa"] is None:
-                raise ValueError("no reference row")
-            if L > case.L_max + 1e-9:
-                rows.append(failed_row(id, L, "fuori ingombro (L > L_max)"))
-                continue
-            os.makedirs(folder, exist_ok=True)
-            res, reason = _solve_one(case, layout, d_opt, L, grid, max_cycles, max_iter,
-                                     tol_dp, folder, verbose)
-            if res is None:
-                rows.append(failed_row(id, L, reason))
-                continue
-            row = compare_row(res.problem, res.design, T, ref)
-            row["id"] = id
-            row["convergito"] = bool(res.converged)
-            row["stato"] = "ok" if res.converged else reason
-            dev = abs(row["L_tubo_mm"] - 1e3 * L)
-            if dev > L_CHECK_MM:
-                row["convergito"] = False
-                row["stato"] = f"lunghezza {row['L_tubo_mm']:.1f} mm lontana da quella richiesta"
-            _save_files(folder, out_dir, res.problem, layout, res.design, row)
-            rows.append(row)
-        except Exception as exc:                   # never raise out of here
-            rows.append(failed_row(id, L, f"errore: {exc}"))
+            print(f"  {len(lengths)} alternatives in {min(procs, len(lengths))} processes",
+                  flush=True)
+
+        def done(i, row):
+            print(f"  Alternative {row['id']}: {row['stato']}", flush=True)
+
+        rows += map_ordered(alternative_worker,
+                            [(case, layout, d_opt, L, grid, max_cycles, max_iter, tol_dp,
+                              out_dir, ref) for L in lengths],
+                            procs, on_done=done if verbose else None)
+    else:
+        for L in lengths:
+            if verbose:
+                print(f"\nAlternative {alt_id(L)}: tube {1e3 * L:.1f} mm", flush=True)
+            rows.append(alternative_row(case, layout, d_opt, L, grid, max_cycles, max_iter,
+                                        tol_dp, out_dir, ref, verbose))
     out = dict(griglia=f"{grid[0]}x{grid[1]}", T_target_N=T, riferimento="ottimo", casi=rows)
     with open(os.path.join(out_dir, "alternative.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)

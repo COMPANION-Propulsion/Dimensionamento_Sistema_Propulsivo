@@ -132,10 +132,47 @@ def _solve_point(case_g, layout, d, T, prev_sol, exponent, verbose):
     raise last
 
 
+def sweep_point(s, case_g, layout, d_opt, T, ref, max_half_angle, prev_sol, verbose):
+    """Row of the point s and the flow to start the next one from (never raises)."""
+    try:
+        d = d_opt if abs(s - 1.0) < 1e-9 else exit_family(layout, d_opt, s)
+        problem, _, _ = _solve_point(case_g, layout, d, T, prev_sol, 1.0, verbose)
+        row = compare_row(problem, d, T, ref)
+        g = problem.geometry(d)
+        div, conv = half_angles_deg(g)
+        err = problem.values(d)["thrust"] / T - 1.0
+        row.update(
+            id=sweep_id(s), s=float(s),
+            tipo=_kind(row["D_uscita_mm"], row["D_ventola_mm"]),
+            semiangolo_convergente_deg=float(conv),
+            V_uscita_m_s=float(report(problem, d)["V_exit"]),
+            entro_limite_angolo=bool(div <= max_half_angle + ANGLE_TOL_DEG
+                                     and conv <= MAX_CONV_HALF_ANGLE),
+            separato=bool(row["tau_w_min_diffusore_Pa"] < 0.0))
+        row["convergito"] = bool(abs(err) <= THRUST_OK)
+        row["stato"] = "ok" if row["convergito"] else \
+            f"spinta {100 * err:+.2f} % dal valore richiesto"
+        return row, (problem.sol or prev_sol)
+    except Exception as exc:               # never raise out of here
+        if verbose:
+            print(f"  failed: {exc}", flush=True)
+        return _failed(s, f"errore: {exc}"), prev_sol
+
+
+def sweep_worker(payload) -> Dict:
+    """Process pool job: one point of the sweep from a cold start (quiet)."""
+    s, case_g, layout, d_opt, T, ref, max_half_angle = payload
+    return sweep_point(s, case_g, layout, d_opt, T, ref, max_half_angle, None, False)[0]
+
+
 def run_exit_sweep(case, layout: MorphLayout, d_opt: np.ndarray, ref_problem: DuctProblem,
                    n: int, grid, out_dir: str, max_half_angle: float,
-                   verbose: bool = True) -> Dict:
-    """Rows of the sweep over s (see the module docstring); writes <out_dir>/uscita.json."""
+                   verbose: bool = True, procs: int = 1) -> Dict:
+    """Rows of the sweep over s (see the module docstring); writes <out_dir>/uscita.json.
+
+    procs = 1: one process, outwards from the optimum, each point warm from the nearest solved
+    flow. procs > 1: the points are solved in `procs` processes, each one from a cold start.
+    """
     os.makedirs(out_dir, exist_ok=True)
     T = float(case.T_target)
     try:
@@ -148,6 +185,20 @@ def run_exit_sweep(case, layout: MorphLayout, d_opt: np.ndarray, ref_problem: Du
     rows: Dict[float, Dict] = {}
     if ref is None:
         rows = {s: _failed(s, ref_error) for s in values}
+    elif procs > 1 and len(values) > 1:
+        from ..parallel import map_ordered
+        case_g = for_grid(replace(case, dp_disk=ref_problem.case.dp_disk), *grid)
+        if verbose:
+            print(f"  {len(values)} points in {min(procs, len(values))} processes, each from a "
+                  "cold start", flush=True)
+
+        def done(i, row):
+            print(f"  Exit sweep s = {values[i]:+.3f}: {row['stato']}", flush=True)
+
+        solved = map_ordered(sweep_worker,
+                             [(s, case_g, layout, d_opt, T, ref, max_half_angle) for s in values],
+                             procs, on_done=done if verbose else None)
+        rows = dict(zip(values, solved))
     else:
         case_g = for_grid(replace(case, dp_disk=ref_problem.case.dp_disk), *grid)
         start_sol = ref_problem.sol
@@ -159,30 +210,8 @@ def run_exit_sweep(case, layout: MorphLayout, d_opt: np.ndarray, ref_problem: Du
             for s in chain:
                 if verbose:
                     print(f"\nExit sweep s = {s:+.3f}", flush=True)
-                try:
-                    d = d_opt if abs(s - 1.0) < 1e-9 else exit_family(layout, d_opt, s)
-                    problem, _, _ = _solve_point(case_g, layout, d, T, prev_sol, 1.0, verbose)
-                    row = compare_row(problem, d, T, ref)
-                    g = problem.geometry(d)
-                    div, conv = half_angles_deg(g)
-                    err = problem.values(d)["thrust"] / T - 1.0
-                    row.update(
-                        id=sweep_id(s), s=float(s),
-                        tipo=_kind(row["D_uscita_mm"], row["D_ventola_mm"]),
-                        semiangolo_convergente_deg=float(conv),
-                        V_uscita_m_s=float(report(problem, d)["V_exit"]),
-                        entro_limite_angolo=bool(div <= max_half_angle + ANGLE_TOL_DEG
-                                                 and conv <= MAX_CONV_HALF_ANGLE),
-                        separato=bool(row["tau_w_min_diffusore_Pa"] < 0.0))
-                    row["convergito"] = bool(abs(err) <= THRUST_OK)
-                    row["stato"] = "ok" if row["convergito"] else \
-                        f"spinta {100 * err:+.2f} % dal valore richiesto"
-                    prev_sol = problem.sol or prev_sol
-                    rows[s] = row
-                except Exception as exc:               # never raise out of here
-                    rows[s] = _failed(s, f"errore: {exc}")
-                    if verbose:
-                        print(f"  failed: {exc}", flush=True)
+                rows[s], prev_sol = sweep_point(s, case_g, layout, d_opt, T, ref, max_half_angle,
+                                                prev_sol, verbose)
     out = dict(griglia=f"{grid[0]}x{grid[1]}", T_target_N=T,
                limite_semiangolo_deg=float(max_half_angle),
                limite_convergente_deg=float(MAX_CONV_HALF_ANGLE), riferimento=sweep_id(1.0),

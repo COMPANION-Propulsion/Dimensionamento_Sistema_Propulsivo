@@ -187,4 +187,8 @@ SISTEMA = {
     "densita_kg_m3": 1240.0,     # [kg/m3] material of the tube and the blades (PLA), for the mass estimate
                                  #   (tube + blades; motor, screws, electronics excluded)
     "riempimento": 1.0,          # [-] solid share of the print (thin walls = 1.0)
+    "processi": None,            # most processes of the whole run (series, variants, scan, grid study, fan
+                                 #   together; the cap is split going inwards); None = automatic:
+                                 #   min(physical cores, floor(0.6 x free RAM / 1.5 GB)), at least 1;
+                                 #   1 = everything in sequence, as before
 }
