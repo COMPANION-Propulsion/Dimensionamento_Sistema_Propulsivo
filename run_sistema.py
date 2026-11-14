@@ -96,7 +96,8 @@ FAN_DEFAULTS = {
     "margine_fascia_m": 0.001, "fascia_min_m": None,     # band loop: read by run_sistema.py only
 }
 SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3, "combinazioni": "tutte",
-                    "densita_kg_m3": 1240.0, "riempimento": 1.0, "processi": None}
+                    "densita_kg_m3": 1240.0, "riempimento": 1.0, "processi": None,
+                    "n_propulsori": None, "esponente_potenza_massa": 1.5}
 PARALLEL_SOLO = (None,) + STEPS[1:]      # --solo values whose chains / cases may run in parallel
 COMBINATIONS = ("tutte", "accoppiate")
 VARIANTS = (("Statore", True), ("NoStatore", False))
@@ -315,28 +316,53 @@ def write_masses(case_root: str, sis: dict) -> None:
     """masses.xlsx of one case (sistema_designer.masse); a warning, never an error, if it fails."""
     try:
         from sistema_designer.masse import write_mass_summary
-        write_mass_summary(case_root, sis["densita_kg_m3"], sis["riempimento"])
+        write_mass_summary(case_root, sis["densita_kg_m3"], sis["riempimento"],
+                           sis.get("n_propulsori"), sis.get("esponente_potenza_massa", 1.5))
     except ImportError as e:
         print(f"WARNING: masses not written (sistema_designer.masse not available: {e}).")
     except Exception as e:
         print(f"WARNING: masses of {case_root} not written: {e}")
 
 
-def write_series_masses(plan: dict, rows: list, sis: dict) -> None:
-    """confronto_casi.xlsx of the series from the cases that finished."""
+def write_series_masses(plan: dict, rows: list, sis: dict):
+    """confronto_casi.xlsx (+ .json with the decision) of the series from the cases that finished.
+
+    Returns the decision dict of the series (None if not written)."""
     done = [(r["label"], r["folder"]) for r in rows if r["rc"] in (0, 3)]
     if not done:
-        return
+        return None
     try:
         from sistema_designer.masse import write_series_summary
         path = os.path.join(plan["root"], "confronto_casi.xlsx")
         write_series_summary([f for _, f in done], path, [l for l, _ in done],
-                             sis["densita_kg_m3"], sis["riempimento"])
+                             sis["densita_kg_m3"], sis["riempimento"],
+                             sis.get("n_propulsori"), sis.get("esponente_potenza_massa", 1.5))
         print(f"Series comparison: {path}")
+        return _read_json(plan["root"], "confronto_casi.json")
     except ImportError as e:
         print(f"WARNING: confronto_casi.xlsx not written (sistema_designer.masse not available: {e}).")
     except Exception as e:
         print(f"WARNING: confronto_casi.xlsx not written: {e}")
+    return None
+
+
+def say(text: str) -> None:
+    """print() that never fails on a console that cannot show the characters (Windows cp1252)."""
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(str(text).encode(enc, "replace").decode(enc, "replace"))
+
+
+def series_decision_lines(sd) -> list:
+    """Lines of the verdict of a series (from confronto_casi.json): best of each case, then ranking."""
+    if not sd:
+        return []
+    lines = [f"- {caso}: {d['verdetto']}" for caso, d in (sd.get("casi") or {}).items()]
+    cl = sd.get("classifica_casi")
+    if cl and cl.get("verdetto"):
+        lines.append(f"- **{cl['verdetto']}**")
+    elif sd.get("motivo_classifica"):
+        lines.append(f"- {sd['motivo_classifica']}.")
+    return lines
 
 
 def status_text(rc) -> str:
@@ -345,7 +371,7 @@ def status_text(rc) -> str:
     return {0: "ok", 3: "ok con avvisi"}.get(rc, f"errore (codice {rc})")
 
 
-def write_series_summary_md(plan: dict, rows: list) -> str:
+def write_series_summary_md(plan: dict, rows: list, decision_lines=None) -> str:
     """RIEPILOGO.md of the series: one row per case."""
     lines = [f"# Riepilogo della serie `{plan['name']}`", "",
              f"Combinazioni: `{plan['mode']}`, {len(plan['cases'])} casi.", "",
@@ -355,6 +381,8 @@ def write_series_summary_md(plan: dict, rows: list) -> str:
     lines += [f"| {r['label']} | {status_text(r['rc'])} | `{r['label']}/` |" for r in rows]
     lines += ["", "Ogni cartella ha il proprio `RIEPILOGO.md`. Confronto delle masse: "
               "`confronto_casi.xlsx`.", ""]
+    if decision_lines:
+        lines += ["## Decisione (massa → potenza)", ""] + list(decision_lines) + [""]
     os.makedirs(plan["root"], exist_ok=True)
     path = os.path.join(plan["root"], "RIEPILOGO.md")
     with open(path, "w", encoding="utf-8") as fh:
@@ -835,6 +863,12 @@ def write_summary(input_file: str, results_dir=None) -> None:
         if conf:
             lines += [f"- {x}" for x in (conf.get("sintesi") or [])[:6]]
         lines += ["Dettagli, bilancio di potenza e grafici: `5_confronto_statore/RISULTATO.md`.", ""]
+    dec = decision_of_case(root)
+    dl = decision_lines(dec)
+    if dl:
+        lines += ["## Decisione (massa → potenza)", ""] + [f"- {x}" for x in dl]
+        lines += ["", "Tabelle complete: `RIEPILOGO_masse.xlsx` (foglio Decisione)"
+                  + (", `5_confronto_statore/RISULTATO.md`" if sub else "") + ".", ""]
     lines += [f"Dettagli: `1_spinta/RISULTATO.md`, `{pre}2_venturi/00_sintesi/RISULTATO.md`, "
               f"`{pre}3_ventola/00_sintesi/RISULTATO.md`, `{pre}4_sistema/00_sintesi/RISULTATO.md`.", ""]
     path = os.path.join(root, "RIEPILOGO.md")
@@ -843,11 +877,48 @@ def write_summary(input_file: str, results_dir=None) -> None:
     print(f"\nSummary: {caso.shown(path)}")
 
 
-def run_confronto(root: str) -> int:
+def decision_of_case(root: str):
+    """The decision dict of a case (RIEPILOGO_masse.json, else 5_confronto_statore), None if none."""
+    for parts in (("RIEPILOGO_masse.json",), ("5_confronto_statore", "confronto_statore.json")):
+        data = _read_json(root, *parts)
+        if data and data.get("decisione"):
+            return data["decisione"]
+    return None
+
+
+def decision_lines(dec) -> list:
+    """Verdict lines of a case: general ranking, stator yes/no, tube length (then the sentences)."""
+    try:
+        from sistema_designer import decisione
+        lines = decisione.righe_schermo(dec)
+        for a in ((dec or {}).get("alternative") or {}).values():
+            if a.get("disponibile"):
+                lines += list((a.get("frasi") or {}).values())
+        return lines
+    except Exception:
+        return []
+
+
+def print_decision(root: str) -> None:
+    """On-screen verdict of a case: at most 3 lines, the general ranking first."""
+    try:
+        from sistema_designer import decisione
+        lines = decisione.righe_schermo(decision_of_case(root))
+    except Exception:
+        lines = []
+    if lines:
+        say("\nDecision (mass -> power):")
+        for x in lines:
+            say("  " + x)
+
+
+def run_confronto(root: str, sis=None) -> int:
     """5_confronto_statore/ from the two chains (what is missing is said in the report)."""
     from sistema_designer import confronto_varianti
+    sis = sis or {}
     try:
-        out = confronto_varianti.run(root)
+        out = confronto_varianti.run(root, sis.get("densita_kg_m3", 1240.0), sis.get("riempimento", 1.0),
+                                     sis.get("n_propulsori"), sis.get("esponente_potenza_massa", 1.5))
     except Exception as e:             # the comparison never stops the chain
         print(f"Comparison failed: {e}")
         return 1
@@ -1002,14 +1073,18 @@ def run_case(input_file: str, solo=None, results_dir=None, procs=None) -> int:
         return 0
     sis = load_sistema(input_file)
     if solo == "masse":
-        write_masses(caso.case_dir(input_file, results_dir), sis)
+        root = caso.case_dir(input_file, results_dir)
+        write_masses(root, sis)
+        print_decision(root)
         return 0
     if solo == "confronto":
         if not sis["confronto_statore"]:
             print("SISTEMA['confronto_statore'] is False: nothing to compare.")
             return 1
-        rc = run_confronto(caso.case_dir(input_file, results_dir))
+        root = caso.case_dir(input_file, results_dir)
+        rc = run_confronto(root, sis)
         write_summary(input_file, results_dir)
+        print_decision(root)
         return rc
     args = argparse.Namespace(input=input_file, solo=solo)
     if args.solo in (None, "spinta"):
@@ -1039,10 +1114,11 @@ def run_case(input_file: str, solo=None, results_dir=None, procs=None) -> int:
                                           child))
         if sis["confronto_statore"] and args.solo is None:
             print("\n" + "#" * 66 + "\n#  CONFRONTO STATORE\n" + "#" * 66)
-            run_confronto(root)
-        write_summary(args.input, results_dir)
+            run_confronto(root, sis)
         if args.solo in (None, "sistema"):
             write_masses(root, sis)
+        write_summary(args.input, results_dir)
+        print_decision(root)
         ok = [rc for rc in results if rc in (0, 3)]
         if not ok:
             return results[0] if results else 1
@@ -1088,13 +1164,19 @@ def run_series(input_file: str, plan: dict, solo=None, procs=None) -> int:
             rows.append(dict(label=c["label"], folder=c["folder"], rc=rc))
             write_series_summary_md(plan, rows + [dict(label=x["label"], folder=x["folder"], rc=None)
                                                   for x in cases[i:]])
-    path = write_series_summary_md(plan, rows)
+    dlines = []
     if solo in (None, "sistema", "masse"):
         sis = {**SISTEMA_DEFAULTS, **plan["raw"].get("SISTEMA", {})}
         first = next((r for r in rows if r["rc"] in (0, 3)), None)
         if first is not None:       # density and filling of the first finished case (they may vary)
             sis = load_sistema(os.path.join(first["folder"], "input_caso.py"))
-        write_series_masses(plan, rows, sis)
+        sd = write_series_masses(plan, rows, sis)
+        dlines = series_decision_lines(sd)
+        if dlines:
+            say("\nSeries decision (mass -> power):")
+            for x in dlines[:3]:
+                say("  " + x.lstrip("- ").replace("**", ""))
+    path = write_series_summary_md(plan, rows, dlines)
     print(f"\nSeries summary: {path}")
     ok = [r["rc"] for r in rows if r["rc"] in (0, 3)]
     if not ok:

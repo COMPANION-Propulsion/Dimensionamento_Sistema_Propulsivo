@@ -125,7 +125,7 @@ def _case(tmp_path, monkeypatch, cs=True, fake=None):
         return 0
 
     monkeypatch.setattr(rs, "run_chain", run_chain)
-    monkeypatch.setattr(rs, "run_confronto", lambda root: 0)
+    monkeypatch.setattr(rs, "run_confronto", lambda root, *a, **k: 0)
     monkeypatch.setattr(rs, "write_summary", lambda *a, **k: None)
     monkeypatch.setattr(rs, "write_masses", lambda *a, **k: None)
     monkeypatch.setattr(rs, "ProcessPoolExecutor", SerialExecutor)

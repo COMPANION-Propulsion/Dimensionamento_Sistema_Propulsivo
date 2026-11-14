@@ -111,6 +111,7 @@ def summarise(folder, densita_kg_m3=1240.0, riempimento=1.0):
         masses = dict(massa_tubo_g=mm['tubo']['massa_g'], massa_rotore_g=mm['rotore']['massa_g'],
                       massa_statore_g=(mm['statore']['massa_g'] if stator_on else 0.0),
                       massa_totale_g=mm['totale']['massa_g'], densita_kg_m3=densita_kg_m3,
+                      alternative=mm['alternative'],
                       riempimento=riempimento)
         if stator_on is False and masses['massa_totale_g'] is not None:
             masses['massa_totale_g'] -= mm['statore']['massa_g'] or 0.0
@@ -341,7 +342,30 @@ def _plots(variants, folder):
     return files
 
 
-def _xlsx(table, variants, path):
+def decision(variants, case_root, n_propulsori=None, esponente=1.5):
+    """Decisione "massa -> potenza" del caso: classifica generale, Statore/NoStatore, lunghezze."""
+    from . import decisione
+    par = decisione.parametri_caso(case_root, n_propulsori, esponente)
+    catene = {}
+    for n in NAMES:
+        s = variants.get(n, {})
+        if not s.get('presente'):
+            continue
+        m = s.get('masse') or {}
+        catene[n] = dict(P_albero_W=s['ventola']['potenza_albero_W'],
+                         energia_J=(s.get('manovra') or {}).get('energia_J'),
+                         coppia_netta_mNm=s['ventola'].get('coppia_netta_mNm'),
+                         m_unita_g=m.get('massa_totale_g'), m_statore_g=m.get('massa_statore_g'),
+                         spinta_N=decisione.spinta_ugello(case_root), L_tubo_mm=s['tubo']['L_tubo_mm'],
+                         alternative=m.get('alternative') or [])
+    mancano = [n for n in NAMES if n not in catene]
+    dec = decisione.decisione_completa(catene, par)
+    if mancano and dec.get('statore') is not None and not dec['statore'].get('disponibile'):
+        dec['statore']['motivo'] = f"variante assente: {', '.join(mancano)}"
+    return dec
+
+
+def _xlsx(table, variants, path, dec=None):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
 
@@ -375,6 +399,8 @@ def _xlsx(table, variants, path):
             for c, v in enumerate(vals, 1):
                 ws.cell(row=r, column=c, value=v)
             r += 1
+    from . import decisione
+    decisione.foglio_caso(wb, dec)
     wb.save(path)
 
 
@@ -387,7 +413,7 @@ def _fmt(x, dec):
     return '—' if x is None else (f'{x:.{dec}f}' if isinstance(x, (int, float)) else str(x))
 
 
-def _markdown(table, variants, pros, cons, files):
+def _markdown(table, variants, pros, cons, files, dec=None):
     L = ['# Confronto con e senza statore', '',
          'Due catene complete (venturi → ventola → sistema), ciascuna con la fascia della ventola '
          'adattata al proprio ingombro. **Senza statore la ventola riprogetta il rotore** '
@@ -408,6 +434,8 @@ def _markdown(table, variants, pros, cons, files):
     if pros or cons:
         L += ['## Senza statore: vantaggi e svantaggi', '']
         L += [f'- vantaggio: {x}' for x in pros] + [f'- svantaggio: {x}' for x in cons] + ['']
+    from . import decisione
+    L += decisione.markdown_caso(dec)
     group = None
     for r in table:
         if r['gruppo'] != group:
@@ -432,7 +460,7 @@ def _markdown(table, variants, pros, cons, files):
     return '\n'.join(L) + '\n'
 
 
-def run(case_root, densita_kg_m3=1240.0, riempimento=1.0):
+def run(case_root, densita_kg_m3=1240.0, riempimento=1.0, n_propulsori=None, esponente=1.5):
     """Scrive 5_confronto_statore/ del caso; ritorna la cartella."""
     root = Path(case_root)
     out = root/OUT
@@ -440,15 +468,21 @@ def run(case_root, densita_kg_m3=1240.0, riempimento=1.0):
     variants = {n: summarise(root/n, densita_kg_m3, riempimento) for n in NAMES}
     table = build_table(variants)
     pros, cons = verdict(table, variants)
+    from . import decisione
     files = _plots(variants, out)
+    try:
+        dec = decision(variants, root, n_propulsori, esponente)
+    except Exception as exc:               # la decisione non ferma mai il confronto
+        dec = dict(disponibile=False, motivo=f'errore: {exc}', statore=None, alternative={}, classifica=None)
     clean = {n: {k: v for k, v in s.items() if k != 'profilo'} for n, s in variants.items()}
     sintesi = [f'vantaggio: {x}' for x in pros] + [f'svantaggio: {x}' for x in cons]
+    sintesi = decisione.righe_schermo(dec) + sintesi
     for n in NAMES:
         if not variants[n].get('presente'):
             sintesi.append(f"{n} non disponibile: {variants[n].get('motivo')}")
     (out/'confronto_statore.json').write_text(json.dumps(
         dict(varianti=clean, tabella=table, vantaggi_senza_statore=pros, svantaggi_senza_statore=cons,
-             sintesi=sintesi, grafici=files), indent=1, ensure_ascii=False, default=str), encoding='utf-8')
-    (out/'RISULTATO.md').write_text(_markdown(table, variants, pros, cons, files), encoding='utf-8')
-    _xlsx(table, variants, out/'confronto_statore.xlsx')
+             sintesi=sintesi, decisione=dec, grafici=files), indent=1, ensure_ascii=False, default=str), encoding='utf-8')
+    (out/'RISULTATO.md').write_text(_markdown(table, variants, pros, cons, files, dec), encoding='utf-8')
+    _xlsx(table, variants, out/'confronto_statore.xlsx', dec)
     return out

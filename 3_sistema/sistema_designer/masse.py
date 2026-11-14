@@ -190,7 +190,8 @@ def _alternatives(chain, densita, riempimento, tubo, notes):
         rows.append(dict(id=r.get('id'), L_tubo_mm=r.get('L_tubo_mm'), dp_Pa=r.get('dp_Pa'),
                          potenza_W=pw, volume_mm3=None if v is None else v*1e9, massa_g=m,
                          delta_massa_g=dm, delta_massa_pct=dm_pct, delta_potenza_pct=dpot,
-                         g_per_pct_potenza=g_pct, convergito=r.get('convergito'), nota=nota))
+                         g_per_pct_potenza=g_pct, convergito=r.get('convergito'), nota=nota,
+                         spinta_N=r.get('spinta_N'), perdita_totale_Pa=r.get('perdita_totale_Pa')))
     return rows
 
 
@@ -337,7 +338,37 @@ def _sheet_statore(wb, case_root, chains):
                 testo=text)
 
 
-def write_mass_summary(case_root, densita_kg_m3=DENSITA_PLA, riempimento=1.0):
+def _dati_catena(case_root, name, m):
+    """Dati di una catena per decisione.py (potenza, massa dell'unita, energia, alternative)."""
+    from . import decisione
+    folder = Path(case_root)/name if name else Path(case_root)
+    info = chain_info(folder)
+    tot = m['totale']['massa_g']
+    st = m['statore']['massa_g']
+    if tot is not None and name == 'NoStatore' and st is not None:
+        tot -= st
+    return dict(P_albero_W=info['potenza_albero_W'], energia_J=decisione.energia_manovra(folder),
+                coppia_netta_mNm=info['coppia_netta_mNm'], m_unita_g=tot,
+                m_statore_g=st if name != 'NoStatore' else 0.0,
+                spinta_N=decisione.spinta_ugello(case_root), L_tubo_mm=info['L_tubo_mm'],
+                alternative=m['alternative'])
+
+
+def _decisione(case_root, chains, n_propulsori=None, esponente=1.5):
+    """Decisione "massa -> potenza" del caso (decisione.decisione_completa); non solleva."""
+    from . import decisione
+    par = decisione.parametri_caso(case_root, n_propulsori, esponente)
+    try:
+        catene = {n: _dati_catena(case_root, n, m) for n, m in chains}
+        return decisione.decisione_completa(catene, par) | dict(catene_dati={
+            n: {k: v for k, v in c.items() if k != 'alternative'} for n, c in catene.items()})
+    except Exception as exc:
+        return dict(disponibile=False, motivo=f'errore: {exc}', parametri=par, statore=None,
+                    alternative={}, classifica=None)
+
+
+def write_mass_summary(case_root, densita_kg_m3=DENSITA_PLA, riempimento=1.0, n_propulsori=None,
+                       esponente=1.5):
     """Scrive RIEPILOGO_masse.xlsx e .json nel caso; ritorna il percorso dell'xlsx."""
     from openpyxl import Workbook
     root = Path(case_root)
@@ -349,9 +380,15 @@ def write_mass_summary(case_root, densita_kg_m3=DENSITA_PLA, riempimento=1.0):
     wb.remove(wb.active)
     _sheet_alternative(wb, chains, with_variant=bool(variants[0][0]))
     stat = _sheet_statore(wb, root, chains) if two else None
+    dec = _decisione(root, chains, n_propulsori, esponente)
+    from . import decisione
+    decisione.foglio_caso(wb, dec)
     ws = wb.create_sheet('Parametri')
     _header(ws, ['voce', 'valore'], {1: 34, 2: 90})
     rows = [('densità [kg/m³]', densita_kg_m3), ('riempimento', riempimento),
+            ('propulsori sul veicolo', dec['parametri'].get('n_propulsori')),
+            ('esponente potenza ∝ massa^e', dec['parametri'].get('esponente')),
+            ('massa di riferimento [kg]', dec['parametri'].get('massa_rif_kg')),
             ('metodo', 'volume dei CAD (STL, mm) x densità x riempimento; solido pieno'),
             ('non inclusi', 'supporti, viti, motore, elettronica')]
     for n, m in chains:
@@ -365,12 +402,98 @@ def write_mass_summary(case_root, densita_kg_m3=DENSITA_PLA, riempimento=1.0):
     wb.save(path)
     (root/'RIEPILOGO_masse.json').write_text(json.dumps(
         dict(densita_kg_m3=densita_kg_m3, riempimento=riempimento,
-             catene={n or 'catena': m for n, m in chains}, statore=stat),
+             catene={n or 'catena': m for n, m in chains}, statore=stat, decisione=dec),
         indent=1, ensure_ascii=False, default=str), encoding='utf-8')
     return str(path)
 
 
-def write_series_summary(case_roots, path, labels, densita_kg_m3=DENSITA_PLA, riempimento=1.0):
+def _sheet_serie(wb, rows, n_propulsori=None, esponente=1.5):
+    """Foglio 'Decisione' di confronto_casi.xlsx: il migliore di ogni caso (con i delta rispetto al
+    primo caso) e, se la SPINTA e uguale per tutti, la classifica fra i casi."""
+    from openpyxl.styles import Font, PatternFill
+    from . import decisione
+    ws = wb.create_sheet('Decisione')
+    ws.column_dimensions['A'].width = 30
+    ws.column_dimensions['B'].width = 34
+    for c in range(3, 20):
+        ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = 18
+    casi, spinte = {}, {}
+    for row in rows:
+        root = Path(row['root']) if row.get('root') else None
+        if root is None or not row['chains'] or row['stato'].startswith('fallito'):
+            continue
+        dec = _decisione(root, [(n, c[1]) for n, c in row['chains'].items()], n_propulsori, esponente)
+        casi[row['caso']] = dec
+        spinte[row['caso']] = decisione.spinta_input(root)
+    head = ['caso', 'miglior candidato', 'massa unità [g]', 'massa veicolo [kg]', 'P albero [W]',
+            'P equivalente [W]', 'rendimento [N/W]', 'Δ massa unità vs primo caso [g]',
+            'Δ P albero vs primo caso [W]', 'Δ P eq. vs primo caso [W]', 'Δ rendimento vs primo caso [%]',
+            'Statore o NoStatore']
+    ws.cell(row=1, column=1, value='Miglior candidato (variante × lunghezza) di ogni caso').font = Font(bold=True)
+    for c, h in enumerate(head, 1):
+        cell = ws.cell(row=2, column=c, value=h)
+        cell.fill, cell.font = PatternFill('solid', fgColor='1F4E78'), Font(bold=True, color='FFFFFF')
+    out_casi, first, r = {}, None, 3
+    for caso, dec in casi.items():
+        cl = dec.get('classifica')
+        if not cl or not cl.get('disponibile'):
+            ws.cell(row=r, column=1, value=caso)
+            ws.cell(row=r, column=2, value=f"non calcolabile: {(cl or dec).get('motivo')}")
+            r += 1
+            continue
+        v = cl['vincitore']
+        b = cl['varianti'][v]
+        first = first or b
+        st = (dec.get('statore') or {}).get('verdetto')
+        vals = [caso, cl['etichette'].get(v, v), b['m_unita_g'], b['m_tot_kg'], b['P_albero_W'], b['P_eff_W'],
+                b['eta_N_W'], b['m_unita_g'] - first['m_unita_g'], b['P_albero_W'] - first['P_albero_W'],
+                b['P_eff_W'] - first['P_eff_W'],
+                None if (b['eta_N_W'] is None or not first['eta_N_W'])
+                else 100*(b['eta_N_W']/first['eta_N_W'] - 1),
+                None if not st else st.split(' Massa di pareggio')[0]]
+        for c, x in enumerate(vals, 1):
+            ws.cell(row=r, column=c, value=_r(x, 4))
+        out_casi[caso] = dict(migliore=cl['etichette'].get(v, v), P_eff_W=b['P_eff_W'], verdetto=cl['verdetto'],
+                              statore=st)
+        r += 1
+    r += 1
+    classifica_casi, motivo = None, None
+    ok = [c for c in casi if (casi[c].get('classifica') or {}).get('disponibile')]
+    if len(ok) < 2:
+        motivo = 'meno di due casi con una decisione: nessuna classifica fra i casi'
+    elif any(spinte[c] != spinte[ok[0]] for c in ok):
+        diff = sorted({k for c in ok for k in set(spinte[c] or {}) | set(spinte[ok[0]] or {})
+                       if (spinte[c] or {}).get(k) != (spinte[ok[0]] or {}).get(k)})
+        motivo = ('SPINTA differente fra i casi (' + ', '.join(diff) + '): missioni diverse, '
+                  'nessuna classifica fra i casi')
+    else:
+        cand, etich = {}, {}
+        for c in ok:
+            cl = casi[c]['classifica']
+            for k, v in cl['candidati'].items():
+                cand[f'{c} | {k}'] = v
+                etich[f'{c} | {k}'] = f"{c}: {cl['etichette'].get(k, k)}"
+        c0 = casi[ok[0]]['classifica']
+        p = c0['parametri']
+        classifica_casi = decisione.valuta_varianti(
+            cand, p['massa_rif_kg'], p['n_propulsori'], p['esponente'], f"{ok[0]} | {p['riferimento']}", etich)
+        if classifica_casi['disponibile']:
+            classifica_casi['etichette'] = etich
+            v = classifica_casi['vincitore']
+            classifica_casi['verdetto'] = ('Migliore fra i casi: ' + etich[v] + ' (potenza equivalente '
+                                           f"{classifica_casi['varianti'][v]['P_eff_W']:.3f} W, "
+                                           f"{decisione._s(classifica_casi['varianti'][v]['d_P_eff_pct'], 1)} % sul riferimento "
+                                           f"{etich[classifica_casi['parametri']['riferimento']]}).")
+    if classifica_casi:
+        decisione.scrivi_blocco_classifica(ws, r, 'Classifica fra i casi (stessa SPINTA: stessa missione)',
+                                           classifica_casi)
+    else:
+        ws.cell(row=r, column=1, value=motivo)
+    return dict(casi=out_casi, classifica_casi=classifica_casi, motivo_classifica=motivo)
+
+
+def write_series_summary(case_roots, path, labels, densita_kg_m3=DENSITA_PLA, riempimento=1.0,
+                         n_propulsori=None, esponente=1.5):
     """confronto_casi.xlsx: una riga per caso (foglio 'Casi'); ritorna il percorso."""
     from openpyxl import Workbook
     names = ('Statore', 'NoStatore')
@@ -384,7 +507,7 @@ def write_series_summary(case_roots, path, labels, densita_kg_m3=DENSITA_PLA, ri
     for root, label in zip(case_roots, labels):
         root = Path(root)
         thrust = (_json(root/'1_spinta'/'spinta.json') or {}).get('T_ugello_N')
-        row = dict(caso=label, stato='ok', spinta=thrust, chains={})
+        row = dict(caso=label, stato='ok', spinta=thrust, chains={}, root=str(root))
         if not root.is_dir():
             row['stato'] = 'cartella del caso assente'
         for n, f in _variants(root):
@@ -429,6 +552,7 @@ def write_series_summary(case_roots, path, labels, densita_kg_m3=DENSITA_PLA, ri
         d_p = None if key[1] is None or first.get('p') is None else key[1] - first['p']
         for c, v in enumerate(vals + [d_m, d_p], 1):
             ws.cell(row=r, column=c, value=_r(v))
+    serie = _sheet_serie(wb, rows, n_propulsori, esponente)
     ws2 = wb.create_sheet('Parametri')
     _header(ws2, ['voce', 'valore'], {1: 30, 2: 80})
     for r, (k, v) in enumerate((('densità [kg/m³]', densita_kg_m3), ('riempimento', riempimento),
@@ -440,4 +564,6 @@ def write_series_summary(case_roots, path, labels, densita_kg_m3=DENSITA_PLA, ri
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
+    path.with_suffix('.json').write_text(json.dumps(serie, indent=1, ensure_ascii=False, default=str),
+                                         encoding='utf-8')
     return str(path)

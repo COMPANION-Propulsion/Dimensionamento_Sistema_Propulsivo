@@ -125,7 +125,7 @@ def test_write_mass_summary_variants(tmp_path):
     path = masse.write_mass_summary(tmp_path)
     assert os.path.isfile(path) and (tmp_path/"RIEPILOGO_masse.json").is_file()
     wb = load_workbook(path)
-    assert wb.sheetnames == ["Alternative", "Statore", "Parametri"]
+    assert wb.sheetnames == ["Alternative", "Statore", "Decisione", "Parametri"]
     ws = wb["Statore"]
     assert "togliendo lo statore" in str(ws["A7"].value)
     assert ws["A4"].value.startswith("NoStatore")

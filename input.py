@@ -187,6 +187,10 @@ SISTEMA = {
     "densita_kg_m3": 1240.0,     # [kg/m3] material of the tube and the blades (PLA), for the mass estimate
                                  #   (tube + blades; motor, screws, electronics excluded)
     "riempimento": 1.0,          # [-] solid share of the print (thin walls = 1.0)
+    "n_propulsori": None,        # thrusters mounted on the vehicle (their mass is added to the vehicle in the
+                                 #   mass -> power decision); None = SPINTA["n_ugelli"]
+    "esponente_potenza_massa": 1.5,  # [-] power ~ mass^e at fixed geometry (actuator disk: thrust ~ mass,
+                                 #   power ~ thrust^1.5); SPINTA["massa"] is the vehicle mass with the reference variant
     "processi": None,            # most processes of the whole run (series, variants, scan, grid study, fan
                                  #   together; the cap is split going inwards); None = automatic:
                                  #   min(physical cores, floor(0.6 x free RAM / 1.5 GB)), at least 1;
