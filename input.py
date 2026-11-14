@@ -2,7 +2,7 @@
 CASO = {
     # Results folder risultati/<nome>/. With a series (see above) it is the series folder and
     # every case is risultati/<nome>/<etichetta>/.
-    "nome": "Run_20261113_fine_Ottimizzato",         # None = name built from the inputs + hash, or a string of your choice
+    "nome": "Run_20261114_fine_Ottimizzato",         # None = name built from the inputs + hash, or a string of your choice
     # A folder with a name whose stored inputs differ from these is refused unless this is True.
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
@@ -191,7 +191,7 @@ SISTEMA = {
                                  #   mass -> power decision); None = SPINTA["n_ugelli"]
     "esponente_potenza_massa": 1.5,  # [-] power ~ mass^e at fixed geometry (actuator disk: thrust ~ mass,
                                  #   power ~ thrust^1.5); SPINTA["massa"] is the vehicle mass with the reference variant
-    "processi": None,            # most processes of the whole run (series, variants, scan, grid study, fan
+    "processi": 4,            # most processes of the whole run (series, variants, scan, grid study, fan
                                  #   together; the cap is split going inwards); None = automatic:
                                  #   min(physical cores, floor(0.6 x free RAM / 1.5 GB)), at least 1;
                                  #   1 = everything in sequence, as before
