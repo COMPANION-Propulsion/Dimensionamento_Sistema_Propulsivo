@@ -2,7 +2,7 @@
 CASO = {
     # Results folder risultati/<nome>/. With a series (see above) it is the series folder and
     # every case is risultati/<nome>/<etichetta>/.
-    "nome": "Run_20261114_fine_Ottimizzato",         # None = name built from the inputs + hash, or a string of your choice
+    "nome": "Run_20261114_6kg_Statore",         # None = name built from the inputs + hash, or a string of your choice
     # A folder with a name whose stored inputs differ from these is refused unless this is True.
     "sovrascrivi": True,  # True = reuse a named folder even if its inputs were different
 }
@@ -12,7 +12,7 @@ SPINTA = {
     # (unless VENTURI["T_ugello"] is a number).
     "distanza": 0.2,         # [m] distance to cover, from rest to rest
     "tempo": 5,             # [s] time available
-    "massa": "4; 6",             # [kg] mass of the cube
+    "massa": 6,             # [kg] mass of the cube
     "n_ugelli": 2,             # nozzles that push on one face: T_ugello = T / n_ugelli
     "profilo": "bang_bang",    # "bang_bang" (accelerate then brake: smallest thrust) or "trapezio"
                                #   (with a cruise at constant speed: more thrust, lower peak speed)
@@ -184,7 +184,7 @@ VENTOLA = {
 
 SISTEMA = {
     # Read by run_sistema.py and 3_sistema.
-    "confronto_statore": True,   # True = chain run twice (Statore/, NoStatore/) + 5_confronto_statore/;
+    "confronto_statore": False,   # True = chain run twice (Statore/, NoStatore/) + 5_confronto_statore/;
                                  #   the stator flag of VENTOLA is overridden per variant; about twice the
                                  #   time (1_spinta is shared). False = one chain with VENTOLA["statore"]
     "iterazioni_fascia": 3,      # most venturi+fan passes to fit the band L_disk to the real fan (stops

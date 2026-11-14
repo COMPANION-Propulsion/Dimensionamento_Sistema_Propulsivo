@@ -15,17 +15,18 @@ Whole chain of the propulsion sizing, from input.py to risultati/<caso>/.
     python run_sistema.py --solo confronto   rewrite 5_confronto_statore/ only (no calculation
                                              of the chains)
     python run_sistema.py --solo riepilogo   rewrite RIEPILOGO.md only (no calculation)
-    python run_sistema.py --solo cad         rebuild the CAD/ folders (and the series index
-                                             CAD/INDICE.txt) from the existing files (no calculation)
+    python run_sistema.py --solo cad         rebuild the SolidWorks versions and the LEGGIMI.txt
+                                             of the 03_cad folders from the existing files (no calculation)
 
-CAD folder. At the end of the chain (and with --solo cad, which calculates nothing) the CAD is
-collected in <case>/CAD/<variant>/ (<case>/CAD/ without variants): 01_tubo.step, 02_rotore.step,
-03_statore.step (with stator), 04_assieme.step, speculari/ (the B versions), stl/, solidworks/
-(parts with names, AP214 and AP203, IGES) and LEGGIMI.txt (what each file is, units, axis, which one
-to open and, if the variant is incomplete, why and what is missing). A series gets
-<series>/CAD/INDICE.txt. They are COPIES: the files the mass, band and assembly code read stay where
-they are (see 3_sistema/sistema_designer/cartella_cad.py). strumenti/riesporta_cad.py does the same
-for results that already exist.
+CAD. There is no CAD/ folder in the case, series or variant root: the CAD files stay in the 03_cad
+folder of their step (2_venturi, 3_ventola, 4_sistema). At the end of the chain (and with --solo cad,
+which calculates nothing) each 03_cad gets a solidworks/ subfolder (parts with names, AP214 and
+AP203, IGES; the B versions in speculari/) with the duct in 2_venturi/03_cad/solidworks, rotor and
+stator in 3_ventola/03_cad/solidworks, the assembly in 4_sistema/03_cad/solidworks, and a short
+LEGGIMI.txt (what each file is, units, axis, which one to open in SolidWorks). What is missing in
+an incomplete variant, and why, is in the RIEPILOGO.md of the case (see
+3_sistema/sistema_designer/cartella_cad.py). strumenti/riesporta_cad.py does the same for results
+that already exist.
 
 Each step writes only what is its own: what needs both duct and fan is in 4_sistema/.
 The fan input is written from VENTOLA of input.py into <chain>/input_ventola.json,
@@ -37,6 +38,15 @@ max(upstream, downstream) + VENTOLA["margine_fascia_m"] (at least VENTOLA["fasci
 the pair is repeated, at most SISTEMA["iterazioni_fascia"] times, until it changes by less than
 0.5 mm. The alternatives and the exit scan of the venturi run in the last pass only. History in
 <chain>/fascia.json.
+
+Fallback on the last valid fan. If in a pass the fan cannot be designed even at the largest
+diameter, but an earlier pass of the same chain had a valid fan, the chain does NOT stop: it goes
+back to the last valid configuration (its L_disk and fan diameter), runs the final venturi pass
+(alternatives and exit scan) with them and keeps the fan of that valid pass (the folder 3_ventola
+of that pass, saved in <chain>/_ventola_valida/ and restored: no new optimisation, so the result
+cannot change). The band is then NOT converged: fascia.json gets "ripiego": true and the reason,
+RIEPILOGO.md a visible line. With no earlier valid pass, or if the fallback fails too, the chain
+stops with an error as before.
 
 Adaptive fan diameter. With VENTURI["D_ventola"] = None the venturi chooses the fan diameter.
 If the fan step then finds no design (exit code other than 0/3, or report.json without "best"),
@@ -92,6 +102,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import time
 import traceback
@@ -120,7 +131,7 @@ SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3, "combina
                     "densita_kg_m3": 1240.0, "riempimento": 1.0, "processi": None,
                     "n_propulsori": None, "esponente_potenza_massa": 1.5}
 PARALLEL_SOLO = (None,) + STEPS[1:]      # --solo values whose chains / cases may run in parallel
-CAD_SOLO = (None, "ventola", "sistema", "cad")   # --solo values after which the CAD/ folder is rebuilt
+CAD_SOLO = (None, "ventola", "sistema", "cad")   # --solo values after which the SolidWorks CAD is rebuilt
 COMBINATIONS = ("tutte", "accoppiate")
 VARIANTS = (("Statore", True), ("NoStatore", False))
 
@@ -369,7 +380,8 @@ def write_series_masses(plan: dict, rows: list, sis: dict):
 
 
 def build_cad(root: str, solidworks: bool = True) -> None:
-    """<case>/CAD/ from the files that exist (no calculation); a warning, never an error."""
+    """solidworks/ and LEGGIMI.txt in the 03_cad of each step, from the files that exist (no
+    calculation); a warning, never an error."""
     try:
         from sistema_designer import cartella_cad
         if not cartella_cad.case_chains(root):
@@ -377,21 +389,10 @@ def build_cad(root: str, solidworks: bool = True) -> None:
             return
         cartella_cad.build_case(root, solidworks, log=say)
     except ImportError as e:
-        print(f"WARNING: CAD folder not written (sistema_designer.cartella_cad not available: {e}).")
+        print(f"WARNING: SolidWorks CAD not written (sistema_designer.cartella_cad not available: {e}).")
     except Exception as e:
-        print(f"WARNING: CAD folder of {root} not written: {e}")
+        print(f"WARNING: SolidWorks CAD of {root} not written: {e}")
         traceback.print_exc()
-
-
-def write_series_cad_index(plan: dict) -> None:
-    """<series>/CAD/INDICE.txt of the cases that have a folder; a warning, never an error."""
-    try:
-        from sistema_designer import cartella_cad
-        cases = [c["folder"] for c in plan["cases"] if cartella_cad.case_chains(c["folder"])]
-        if cases:
-            print(f"CAD index of the series: {cartella_cad.write_series_index(plan['root'], cases)}")
-    except Exception as e:
-        print(f"WARNING: CAD index of the series not written: {e}")
 
 
 def say(text: str) -> None:
@@ -669,6 +670,51 @@ def adaptive_diameters(D0: float, D_max: float, step_min: float = ADAPT_STEP_MIN
     return out
 
 
+class FanUnavailable(RuntimeError):
+    """The fan cannot be designed (or has no CAD) even at the largest diameter the input allows."""
+
+
+FAN_SNAPSHOT = "_ventola_valida"     # <chain>/: 3_ventola of the last valid pass (removed at the end)
+
+
+def _rmtree(path: str) -> None:
+    """shutil.rmtree that also removes read-only files (Windows)."""
+    def force(func, p, exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if os.path.isdir(path):
+        shutil.rmtree(path, onexc=force)
+
+
+def save_fan(folder: str) -> None:
+    """Copy 3_ventola/ (and input_ventola.json) of the pass that just succeeded."""
+    snap = os.path.join(folder, FAN_SNAPSHOT)
+    _rmtree(snap)
+    os.makedirs(snap)
+    shutil.copytree(os.path.join(folder, "3_ventola"), os.path.join(snap, "3_ventola"))
+    src = os.path.join(folder, "input_ventola.json")
+    if os.path.isfile(src):
+        shutil.copyfile(src, os.path.join(snap, "input_ventola.json"))
+
+
+def restore_fan(folder: str) -> None:
+    """Put the saved valid 3_ventola/ back in place of whatever the failed passes left."""
+    snap = os.path.join(folder, FAN_SNAPSHOT)
+    _rmtree(os.path.join(folder, "3_ventola"))
+    shutil.copytree(os.path.join(snap, "3_ventola"), os.path.join(folder, "3_ventola"))
+    saved = os.path.join(snap, "input_ventola.json")
+    if os.path.isfile(saved):
+        shutil.copyfile(saved, os.path.join(folder, "input_ventola.json"))
+
+
+def ripiego_sentence(row: dict) -> str:
+    """The visible sentence for a chain that kept the last valid fan (row of fascia.json)."""
+    return (f"Ventola al limite: con la fascia di {1e3 * row['L_disk_fallita_m']:.2f} mm la ventola "
+            f"non si progetta; tenuta l'ultima configurazione valida (fascia "
+            f"{1e3 * row['L_disk_m']:.2f} mm, D {row['D_ventola_mm']:.2f} mm). Per avere margine: "
+            "tubo più largo (D_ext_max), mozzo più piccolo (mozzo_su_D) o solidità maggiore.")
+
+
 def cad_missing(rep: dict, stator_on: bool, why: str, dp: float, D: float, Q: float) -> Exception:
     """The fan was accepted but its CAD is missing or incomplete: an explicit error.
 
@@ -693,13 +739,15 @@ def cad_missing(rep: dict, stator_on: bool, why: str, dp: float, D: float, Q: fl
 
 
 def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, prev=None,
-                procs=None):
+                procs=None, reuse_fan: bool = False):
     """One venturi + fan pass; returns (row without the update, risultati dict, report dict).
 
     prev = (dp, D) of the previous venturi: when the venturi gives the same duct again (the
     final pass with the extras) the fan is not repeated. skip_extras passes have no grid study
     (their dp is the secant on the finest grid from the dp of the optimisation grid, so it does
     not repeat to the last digit in the final pass: the fan is then run again).
+    reuse_fan = True: the fan of 3_ventola/ is kept whatever the dp (fallback on the last valid
+    fan: the folder was restored, nothing is optimised again).
     """
     from sistema_designer.fascia import band_need
     venturi_dir = os.path.join(folder, "2_venturi")
@@ -709,7 +757,8 @@ def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, p
     res = _read_json(venturi_dir, "00_sintesi", "risultati.json")
     dp, D = res["ventola"]["dp_disk_Pa"], res["ventola"]["D_ventola_m"]
     Q = res["ventola"].get("portata_m3_s", float("nan"))
-    reused = bool(prev) and abs(dp - prev[0]) <= 1e-6 * abs(prev[0]) and abs(D - prev[1]) <= 1e-9
+    reused = reuse_fan or (bool(prev) and abs(dp - prev[0]) <= 1e-6 * abs(prev[0])
+                           and abs(D - prev[1]) <= 1e-9)
     if not reused:
         rc = run_ventola(derived, folder, **_kw(procs))
         if rc == 1:                    # input error of the fan: another diameter does not help
@@ -733,7 +782,16 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
                 procs=None) -> int:
     """Venturi + fan repeated until L_disk fits the real fan. 0 = done, else failing code.
 
-    procs = budget of processes of this chain (see the module docstring), None = unmanaged."""
+    procs = budget of processes of this chain (see the module docstring), None = unmanaged.
+    If a pass cannot design the fan but an earlier one could, the chain falls back on that one."""
+    try:
+        return _fascia_loop(input_file, case_root, folder, label, stator, sis, procs)
+    finally:
+        _rmtree(os.path.join(folder, FAN_SNAPSHOT))
+
+
+def _fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis: dict,
+                 procs=None) -> int:
     from sistema_designer.fascia import update_band, write_json
     from spinta_designer import caso
     inputs = caso.load_input(input_file)
@@ -791,7 +849,7 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
             say(f"  ventola progettata con D = {1e3 * D:.1f} mm: diametro tenuto per il resto "
                 "della catena")
             return row, res, rep
-        raise RuntimeError(
+        raise FanUnavailable(
             f"ventola non progettabile (o senza CAD) nemmeno al diametro massimo ammesso dagli input: "
             f"D = {1e3 * err.D:.2f} mm (massimo {1e3 * D_max:.2f} mm), dp = {err.dp:.1f} Pa, "
             f"portata = {1e3 * err.Q:.2f} L/s. Ultimo motivo: {err.why}. Rivedere VENTOLA "
@@ -809,6 +867,44 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
         write_json(path, rows)
         return 1
 
+    valid = {}          # last pass with a valid fan: L [m], D [m], dp [Pa], iteration
+
+    def keep_valid(row, L_used, n):
+        """Remember the pass that just succeeded (and save its fan, unless it is the same fan)."""
+        if not row.get("ventola_riusata") or not valid:
+            save_fan(folder)
+        valid.update(L=L_used, D=1e-3 * row["D_ventola_mm"], dp=row["dp_Pa"], n=n)
+
+    def fall_back(err, n, L_failed):
+        """The fan of pass n cannot be designed: back to the last valid configuration."""
+        L, D = valid["L"], valid["D"]
+        motivo = (f"in passata {n} (fascia {1e3 * L_failed:.2f} mm) la ventola non si progetta "
+                  f"neppure al diametro massimo: {err}")
+        say(f"\nVentola non progettabile con la fascia di {1e3 * L_failed:.2f} mm: ripiego "
+            f"sull'ultima configurazione valida (passata {valid['n']}: fascia {1e3 * L:.2f} mm, "
+            f"D {1e3 * D:.2f} mm). Venturi finale (con alternative e scansione dell'uscita) e "
+            "ventola di quella passata.")
+        try:
+            restore_fan(folder)
+            derived = write_chain_input(input_file, folder, name, L, T, stator, D)
+            row, res, _ = fascia_pass(derived, folder, stator_on, False, None, procs=procs,
+                                      reuse_fan=True)
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
+            return fail(RuntimeError(f"{motivo}. Anche il ripiego sull'ultima configurazione "
+                                     f"valida (fascia {1e3 * L:.2f} mm, D {1e3 * D:.2f} mm) e "
+                                     f"fallito: {e}"), n, L_failed)
+        upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
+        row.update(iterazione=n, L_disk_m=L, L_disk_nuovo_m=upd["L_disk_nuovo_m"], convergito=False,
+                   tagliato=upd["tagliato"], ripiego=True, ripiego_motivo=motivo,
+                   L_disk_fallita_m=L_failed, D_ventola_fissato_mm=1e3 * D,
+                   ventola_da_passata=valid["n"], dp_ventola_Pa=valid["dp"])
+        if fan["D0"] is not None:
+            row["D_ventola_adattato_da_mm"] = 1e3 * fan["D0"]
+        rows.append(row)
+        write_json(path, rows)
+        say(f"WARNING chain {name}: {ripiego_sentence(row)}")
+        return 0
+
     while True:
         it += 1
         last = it >= n_max
@@ -816,10 +912,13 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
               f"{'' if last else ' (venturi without alternatives/exit scan)'} ---")
         try:
             row, res, _ = run_pass(L, not last, None, it)
+        except (FanFailed, FanUnavailable) as e:
+            return fall_back(e, it, L) if valid else fail(e, it, L)
         except (RuntimeError, ValueError, KeyError) as e:
             return fail(e, it, L)
         upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
         record(row, upd, it, L)
+        keep_valid(row, L, it)
         prev = (row["dp_Pa"], row["D_ventola_mm"] * 1e-3)
         print(f"  need upstream {1e3 * row['monte_m']:.2f} mm, downstream {1e3 * row['valle_m']:.2f} mm "
               f"-> L_disk {1e3 * upd['L_disk_nuovo_m']:.2f} mm"
@@ -829,10 +928,13 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
             print("  band converged: final venturi pass with alternatives and exit scan")
             try:
                 row, res, _ = run_pass(L, False, prev, it + 1)
+            except (FanFailed, FanUnavailable) as e:
+                return fall_back(e, it + 1, L) if valid else fail(e, it + 1, L)
             except (RuntimeError, ValueError, KeyError) as e:
                 return fail(e, it + 1, L)
             upd = update_band(L, row, F["margine_fascia_m"], F["fascia_min_m"], L_max)
             record(row, upd, it + 1, L)
+            keep_valid(row, L, it + 1)
             last = True
         if last or upd["convergito"]:
             if not upd["convergito"]:
@@ -904,6 +1006,13 @@ def write_summary(input_file: str, results_dir=None) -> None:
     if sub:
         lines += ["Il confronto statore sì/no ha due catene complete: questo riepilogo descrive "
                   "quella **con statore** (`Statore/`); quella senza è in `NoStatore/`.", ""]
+    chain_dirs = [(v, os.path.join(root, v)) for v in ("Statore", "NoStatore")
+                  if os.path.isdir(os.path.join(root, v))] or [(None, root)]
+    for variant, cdir in chain_dirs:     # fan at the limit: fallback on the last valid configuration
+        for r in (_read_json(cdir, "fascia.json") or []):
+            if r.get("ripiego"):
+                tag = f"[{variant}] " if variant else ""
+                lines += [f"- **{tag}{ripiego_sentence(r)}**", ""]
     try:           # incomplete chains first: what is missing and why (never hidden by a good chain)
         from sistema_designer import cartella_cad
         for variant, chain_root in cartella_cad.case_chains(root):
@@ -913,9 +1022,9 @@ def write_summary(input_file: str, results_dir=None) -> None:
                 lines += [f"- **CATENA / CAD INCOMPLETO{tag}:** mancano "
                           f"{', '.join(st['mancano'])}"] + [f"  - perché: {x}" for x in st["problemi"]]
             lines += [f"  - avviso: {x}" for x in st["avvisi"]]
-        if os.path.isdir(os.path.join(root, "CAD")):
-            lines += ["- CAD con nomi chiari (tubo, rotore, statore, assieme, STL, versione per "
-                      "SolidWorks): cartella `CAD/`, spiegazione in `LEGGIMI.txt` di ogni variante"]
+        lines += ["- CAD: file di ogni step in `2_venturi/03_cad`, `3_ventola/03_cad`, "
+                  "`4_sistema/03_cad` (per SolidWorks la sottocartella `solidworks/`, "
+                  "spiegazione in `LEGGIMI.txt`)"]
         if lines[-1] != "":
             lines.append("")
     except Exception:
@@ -925,7 +1034,7 @@ def write_summary(input_file: str, results_dir=None) -> None:
         last = fascia[-1]
         lines += [f"- fascia della ventola: L_disk {last['L_disk_m'] * 1e3:.2f} mm dopo "
                   f"{len(fascia)} passate, "
-                  f"{'convergita' if last['convergito'] else '**NON convergita**'} "
+                  f"{'convergita' if last['convergito'] else ('**NON convergita** (ripiego sull ultima configurazione valida)' if last.get('ripiego') else '**NON convergita**')} "
                   f"(`{pre}fascia.json`)"]
         if last.get("D_ventola_adattato_da_mm") is not None:
             lines.append(f"- Diametro ventola adattato: {last['D_ventola_adattato_da_mm']:.1f} -> "
@@ -1366,8 +1475,6 @@ def run_series(input_file: str, plan: dict, solo=None, procs=None) -> int:
             say("\nSeries decision (mass -> power):")
             for x in dlines[:3]:
                 say("  " + x.lstrip("- ").replace("**", ""))
-    if solo in CAD_SOLO:
-        write_series_cad_index(plan)
     path = write_series_summary_md(plan, rows, dlines)
     print(f"\nSeries summary: {path}")
     ok = [r["rc"] for r in rows if r["rc"] in (0, 3)]
@@ -1391,8 +1498,8 @@ def main(argv=None) -> int:
     p.add_argument("--solo", choices=SOLO, default=None,
                    help="Run one step only (in every chain and every case, no band loop); "
                         "'confronto' rewrites 5_confronto_statore/, 'riepilogo' RIEPILOGO.md and "
-                        "'masse' the mass workbooks, 'cad' the CAD/ folders (and CAD/INDICE.txt of a "
-                        "series), all without calculating.")
+                        "'masse' the mass workbooks, 'cad' the solidworks/ folders and LEGGIMI.txt "
+                        "of the 03_cad folders, all without calculating.")
     p.add_argument("--elenca", action="store_true",
                    help="Print the cases of the series (input values 'a; b') and their labels; run nothing.")
     p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
