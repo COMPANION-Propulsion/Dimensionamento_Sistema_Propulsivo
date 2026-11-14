@@ -57,11 +57,13 @@ def band_need(report, venturi_results, stator_on, cad_dir=None):
     """
     cad = (report or {}).get('cad') or {}
     if not cad or cad.get('errore') or cad.get('hub_length_mm') is None:
-        raise ValueError('report.json senza dati CAD della ventola: ingombro non calcolabile.')
+        why = cad.get('errore') or cad.get('status') or 'campo cad assente'
+        raise ValueError(f'report.json senza dati CAD della ventola ({why}): ingombro non calcolabile.')
     x0 = _centre_mm(cad, venturi_results)
     st = cad.get('stator') if stator_on else None
     if stator_on and not st:
-        raise ValueError('statore richiesto ma assente nel CAD della ventola.')
+        why = '; '.join(cad.get('avvisi') or []) or 'nessun motivo registrato in report.json (cad.avvisi)'
+        raise ValueError(f'statore richiesto ma assente nel CAD della ventola: {why}')
     rotor = stl_x_range(Path(cad_dir)/'ventola_A.stl') if cad_dir else None
     if rotor is not None:
         up, rotor_down, source = x0 - rotor[0], rotor[1] - x0, 'STL del rotore'

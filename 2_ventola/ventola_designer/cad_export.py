@@ -12,7 +12,10 @@ spostamenti. Senza dati del Venturi resta nell'origine, sempre con asse X.
     statore_A / statore_B_speculare  pale fisse + mozzo fisso dopo il rotore, se c'e lo
                                      statore (corpi separati dal rotore: zona fissa in CFD)
     pala.step / .stl                 una pala sola, con la radice dentro il mozzo
-    CAD_info.json                    unita, versi di rotazione, gioco, controlli
+    CAD_info.json                    unita, versi di rotazione, gioco, controlli, avvisi
+
+La versione per SolidWorks (parti nominate, AP214/AP203, IGES) e in cad_solidworks.py.
+Il rotore si scrive sempre; se lo statore non si costruisce il motivo e in `avvisi`.
 
 Le sezioni sono spline chiuse (dorso e ventre), unite sezione per sezione da
 superfici rigate: ogni sezione e una curva liscia e lungo l'apertura ci sono
@@ -48,6 +51,7 @@ from pathlib import Path
 import numpy as np
 
 from .geometry import blade_sections
+from .settings import sizing_settings
 
 TIP_CLEARANCE_M = 0.0005   # default del gioco di punta
 ROOT_OVERLAP = 0.6         # raggio della sezione di radice dentro il mozzo / raggio del mozzo
@@ -79,12 +83,12 @@ def _root_section(points, r_from, r_to):
     return out
 
 
-def _blade_geometry(design, clearance):
+def _blade_geometry(design, clearance, sections=SECTIONS):
     cad = deepcopy(design)
     cad['outer_diameter_m'] = design['outer_diameter_m'] - 2*clearance
     if cad['outer_diameter_m'] <= design['hub_diameter_m']:
         raise ValueError('Gioco di punta troppo grande per il raggio della pala.')
-    return cad, blade_sections(cad, count=SECTIONS, panels=80), design['hub_diameter_m']/2
+    return cad, blade_sections(cad, count=sections, panels=80), design['hub_diameter_m']/2
 
 
 def _extended_root(sections, r_hub):
@@ -101,9 +105,13 @@ def _extended_root(sections, r_hub):
     return (1 + s)*p0 - s*p1
 
 
-def blade_solid(design, clearance=TIP_CLEARANCE_M):
-    """Una pala, in mm, con la radice prolungata dentro il mozzo."""
-    cad, sections, r_hub = _blade_geometry(design, clearance)
+def blade_solid(design, clearance=TIP_CLEARANCE_M, sections=SECTIONS):
+    """Una pala, in mm, con la radice prolungata dentro il mozzo.
+
+    sections: tratti rigati lungo l'apertura + 1 (SECTIONS nel CAD di progetto; meno nella
+    versione semplificata per SolidWorks, vedi cad_solidworks.py).
+    """
+    cad, sections, r_hub = _blade_geometry(design, clearance, sections)
     inner = _extended_root(sections, r_hub)
     root = _root_section(inner, r_hub, ROOT_OVERLAP*r_hub)
     stack = [root, inner] + [s['points'] for s in sections[1:]]
@@ -177,9 +185,9 @@ def _closed_loft(wires):
     return solid
 
 
-def rotor_solid(design, clearance=TIP_CLEARANCE_M):
+def rotor_solid(design, clearance=TIP_CLEARANCE_M, sections=SECTIONS):
     """Mozzo cilindrico + tutte le pale, fusi in un solido, in mm."""
-    blade = blade_solid(design, clearance)
+    blade = blade_solid(design, clearance, sections)
     bb = blade.BoundingBox()
     r_hub = 1000*design['hub_diameter_m']/2
     z0, z1 = bb.zmin - 1000*HUB_MARGIN_M, bb.zmax + 1000*HUB_MARGIN_M
@@ -235,20 +243,53 @@ def to_duct_frame(shape, x_mm):
     return shape.rotate(cq.Vector(0, 0, 0), cq.Vector(0, 1, 0), 90).translate(cq.Vector(x_mm, 0, 0))
 
 
-def stator_sections(case, design, count=21):
-    """Corda e calettamento dello statore per raggio, dal BEMT del punto di progetto."""
+STATOR_FALLBACK_STATIONS = 21
+
+
+def stator_sections(case, design, count=None):
+    """Corda e calettamento dello statore per raggio, dal BEMT del punto di progetto.
+
+    Ritorna (pale dello statore, righe (r, corda, calettamento), anelli usati).
+
+    Il progetto e accettato dall'ottimizzatore con stations_final anelli. Con pochi anelli
+    (21, come faceva questa funzione) un anello vicino al mozzo, dove il carico del rotore e
+    appena sopra zero, puo uscire con carico <= 0 e il BEMT alza "Carico non positivo nel
+    regime di compressione" anche per un progetto valido: e un controllo secondario, non il
+    criterio di accettazione. Si usa quindi la stessa discretizzazione della verifica finale
+    e, solo se non si risolve, quelle piu grossolane; se nessuna si risolve ValueError.
+    """
     from .polars import PolarGrid
     from .pressure_bemt import solve_pressure
+    from .settings import sizing_settings
     polar = PolarGrid.load(Path(__file__).parent/'airfoils'/'polars_neuralfoil'/f"{design['profile']}.json")
     rpm = design.get('rpm', (design.get('rpm_by_point') or [None])[0])
-    result = solve_pressure(case, {**design, 'rpm': rpm}, case['operating_points'][0], polar,
-                            stations=count)
-    rows = [(r['r_m'], r['stator_chord_m'], r['stator_stagger_deg']) for r in result['local']]
-    return result['stator_vanes'], rows
+    cfg = sizing_settings(case)
+    tries = [count] if count else [cfg['stations_final'], cfg['stations_verification'],
+                                   cfg['stations_optimization'], STATOR_FALLBACK_STATIONS]
+    last = None
+    for n in tries:
+        try:
+            result = solve_pressure(case, {**design, 'rpm': rpm}, case['operating_points'][0], polar,
+                                    stations=n)
+        except ValueError as exc:            # PolarDomainError e' un ValueError
+            last = exc
+            continue
+        rows = [(r['r_m'], r['stator_chord_m'], r['stator_stagger_deg']) for r in result['local']]
+        return result['stator_vanes'], rows, n
+    raise ValueError(f'BEMT dello statore non risolvibile con {tries} anelli: {last}')
 
 
-def stator_vane(profile, rows, r_from, r_to, z_le_mm):
-    """Una pala dello statore in mm (asse Z), dal mozzo alla parete del condotto.
+def stator_rows_from_info(info):
+    """Righe (r, corda, calettamento) gia scritte in CAD_info.json (campo stator): nessun calcolo."""
+    st = (info or {}).get('stator') or {}
+    if not st.get('radius_mm'):
+        return None
+    return st['vanes'], [(r/1000, c/1000, g) for r, c, g in
+                         zip(st['radius_mm'], st['chord_mm'], st['stagger_deg'])]
+
+
+def stator_vane_points(profile, rows, r_from, r_to, z_le_mm, sections=SECTIONS):
+    """Sezioni (liste di punti in mm, asse Z) della pala dello statore, dal mozzo alla parete.
 
     Corda allineata al flusso medio meno l'incidenza: dal bordo d'attacco verso
     valle e verso -theta (lo swirl del rotore va verso -theta), dorso verso -theta.
@@ -258,8 +299,8 @@ def stator_vane(profile, rows, r_from, r_to, z_le_mm):
     radii = np.array([r for r, _, _ in rows])
     chords = np.array([c for _, c, _ in rows])
     stagger = np.array([g for _, _, g in rows])
-    wires = []
-    for r in np.linspace(r_from, r_to, SECTIONS):
+    out = []
+    for r in np.linspace(r_from, r_to, sections):
         c = float(np.interp(r, radii, chords))
         g = math.radians(float(np.interp(r, radii, stagger)))
         e_c = (-math.sin(g), math.cos(g))         # (tangenziale, assiale), bordo d'attacco -> uscita
@@ -270,18 +311,31 @@ def stator_vane(profile, rows, r_from, r_to, z_le_mm):
             z = c*(x*e_c[1] + y*e_n[1])
             a = t/r
             pts.append((1000*r*math.cos(a), 1000*r*math.sin(a), z_le_mm + 1000*z))
-        wires.append(_section_wire(pts))
-    return _closed_loft(wires)
+        out.append(pts)
+    return out
 
 
-def stator_solid(case, design, z_start_mm):
-    """Mozzo fisso + pale dello statore, in mm (asse Z), e dati di progetto."""
+def stator_vane(profile, rows, r_from, r_to, z_le_mm, sections=SECTIONS):
+    """Una pala dello statore in mm (asse Z), dal mozzo alla parete del condotto."""
+    return _closed_loft([_section_wire(pts) for pts in
+                         stator_vane_points(profile, rows, r_from, r_to, z_le_mm, sections)])
+
+
+def stator_solid(case, design, z_start_mm, rows=None, sections=SECTIONS):
+    """Mozzo fisso + pale dello statore, in mm (asse Z), e dati di progetto.
+
+    rows = (pale, righe) gia note (CAD_info.json): senza, le calcola il BEMT (stator_sections).
+    """
     st = case.get('stator') or {}
-    n, rows = stator_sections(case, design)
+    stations = None
+    if rows is None:
+        n, rows, stations = stator_sections(case, design)
+    else:
+        n, rows = rows
     r_hub, r_duct = design['hub_diameter_m']/2, design['outer_diameter_m']/2
     gap = 1000*float(st.get('axial_gap_m', 0.002))
     z_le = z_start_mm + gap
-    vane = stator_vane(st.get('profile', 'NACA4412'), rows, ROOT_OVERLAP*r_hub, r_duct, z_le)
+    vane = stator_vane(st.get('profile', 'NACA4412'), rows, ROOT_OVERLAP*r_hub, r_duct, z_le, sections)
     bb = vane.BoundingBox()
     hub = cq.Solid.makeCylinder(1000*r_hub, bb.zmax + 1000*HUB_MARGIN_M - z_start_mm,
                                 cq.Vector(0, 0, z_start_mm), cq.Vector(0, 0, 1))
@@ -293,7 +347,8 @@ def stator_solid(case, design, z_start_mm):
         raise ValueError('Solido dello statore non valido dopo la fusione.')
     data = dict(vanes=n, profile=st.get('profile', 'NACA4412'), axial_gap_mm=gap,
                 chord_mm=[1000*c for _, c, _ in rows], stagger_deg=[g for _, _, g in rows],
-                radius_mm=[1000*r for r, _, _ in rows], length_mm=bb.zmax - z_le)
+                radius_mm=[1000*r for r, _, _ in rows], length_mm=bb.zmax - z_le,
+                bemt_stations=stations)
     return body, data
 
 
@@ -313,16 +368,28 @@ def export_cad(directory, case, design):
     blade, rotor, mirror = (to_duct_frame(s, x_mm) for s in (blade, rotor, mirror))
     shapes = [('pala', blade), ('ventola_A', rotor), ('ventola_B_speculare', mirror)]
     stator_info = None
+    warnings = []
     if (case.get('stator') or {}).get('enabled'):
-        stator, stator_info = stator_solid(case, design, z_rotor_end)
-        shapes += [('statore_A', to_duct_frame(stator, x_mm)),
-                   ('statore_B_speculare', to_duct_frame(stator.mirror('XZ'), x_mm))]
-        stator_info['x_end_mm'] = shapes[-1][1].BoundingBox().xmax
-        straight_end = fan_section_end_mm(case)
-        if straight_end is not None and stator_info['x_end_mm'] > straight_end:
-            stator_info['avviso'] = (f"lo statore finisce a x = {stator_info['x_end_mm']:.1f} mm, "
-                                     f"oltre il tratto dritto del condotto ({straight_end:.1f} mm): "
-                                     f"aumentare VENTURI['L_disk']")
+        # Il rotore resta scritto anche se lo statore non si costruisce: il CAD della ventola
+        # di un progetto accettato non deve sparire per un controllo secondario.
+        try:
+            stator, stator_info = stator_solid(case, design, z_rotor_end)
+        except Exception as exc:
+            warnings.append(f'statore non costruito: {exc}')
+            print(f'AVVISO CAD: {warnings[-1]}', flush=True)
+        else:
+            shapes += [('statore_A', to_duct_frame(stator, x_mm)),
+                       ('statore_B_speculare', to_duct_frame(stator.mirror('XZ'), x_mm))]
+            stator_info['x_end_mm'] = shapes[-1][1].BoundingBox().xmax
+            straight_end = fan_section_end_mm(case)
+            if straight_end is not None and stator_info['x_end_mm'] > straight_end:
+                stator_info['avviso'] = (f"lo statore finisce a x = {stator_info['x_end_mm']:.1f} mm, "
+                                         f"oltre il tratto dritto del condotto ({straight_end:.1f} mm): "
+                                         f"aumentare VENTURI['L_disk']")
+            if stator_info.get('bemt_stations') not in (None, sizing_settings(case)['stations_final']):
+                warnings.append(f"statore dimensionato con {stator_info['bemt_stations']} anelli BEMT "
+                                f"invece di {sizing_settings(case)['stations_final']}: il carico del "
+                                f"rotore e al limite vicino al mozzo")
     files = {}
     for name, shape in shapes:
         shape.exportStep(str(out/f'{name}.step'))
@@ -337,7 +404,7 @@ def export_cad(directory, case, design):
         diameter_aero_mm=1000*design['outer_diameter_m'],
         diameter_cad_mm=1000*(design['outer_diameter_m'] - 2*clearance),
         tip_clearance_mm=1000*clearance, hub_diameter_mm=1000*design['hub_diameter_m'],
-        hub_length_mm=bb.xlen, stator=stator_info,
+        hub_length_mm=bb.xlen, stator=stator_info, avvisi=warnings,
         rotation={'ventola_A': 'oraria vista da valle (guardando verso -X)',
                   'ventola_B_speculare': 'antioraria vista da valle (guardando verso -X)'},
         note=('Coppia di ugelli A + B: stessa spinta e stessa potenza, momenti di reazione '

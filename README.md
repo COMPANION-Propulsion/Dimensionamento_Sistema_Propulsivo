@@ -82,6 +82,7 @@ python run_sistema.py --elenca        # casi ed etichette, senza eseguire nulla
 python run_sistema.py                 # tutta la serie
 python run_sistema.py --solo ventola  # un passo in ogni caso
 python run_sistema.py --solo masse    # riscrive solo gli Excel delle masse
+python run_sistema.py --solo cad      # ricostruisce le cartelle CAD/ dai file esistenti
 ```
 
 Indicatori a posteriori di una ventola (sforzo centrifugo alla radice, squilibrio, velocità di punta, inerzia), dalla cartella `2_ventola`; `--pale` limita i numeri di pale confrontati e `--scrivi` scrive `confronto_pale.json` e `CONFRONTO_PALE.md` accanto al report:
@@ -119,6 +120,8 @@ In ogni passo successivo al primo, `00_sintesi` contiene `RISULTATO.md` (da legg
 In `3_ventola/00_sintesi/` sono scritti anche `confronto_pale.json` e `CONFRONTO_PALE.md`: la migliore ventola accettata per ciascun numero di pale, a confronto su potenza, giri, coppia, rendimento, corda, spessore minimo, sforzo centrifugo alla radice, squilibrio e inerzia. Si scrivono in automatico alla fine del passo ventola e di nuovo quando si riscrive il riepilogo.
 
 Decisione massa → potenza. A fine caso e fine serie lo script dice quale variante conviene mettendo la massa sulla stessa scala della potenza: ogni grammo va spinto anch'esso, la spinta richiesta è proporzionale alla massa totale e a geometria fissa la potenza cresce come la spinta^1.5 (disco attuatore). Per ogni candidato `m_tot = massa_rif + n_propulsori·(m_unità − m_unità_rif)` e `P_eff = P_albero·(m_tot/massa_rif)^esponente` (stessa formula per l'energia della manovra), con `massa_rif = SPINTA["massa"]` (veicolo con la variante di riferimento, `Statore`), `n_propulsori = SISTEMA["n_propulsori"]` (`None` = `SPINTA["n_ugelli"]`) ed `esponente = SISTEMA["esponente_potenza_massa"]` (1.5). Vince la `P_eff` minore, a parità entro 0.5 % la più leggera. Il verdetto, con i numeri e la massa di pareggio, è nel foglio `Decisione` di `RIEPILOGO_masse.xlsx` e di `5_confronto_statore/confronto_statore.xlsx` (classifica generale variante × lunghezza del tubo in cima, poi Statore/NoStatore, poi la tabella di compromesso di ogni lunghezza rispetto all'ottimo), nella sezione Decisione di `5_confronto_statore/RISULTATO.md` e di `RIEPILOGO.md`, nel JSON (`decisione`) e a video. Nella serie, `confronto_casi.xlsx` (foglio `Decisione`) dà il migliore di ogni caso con i delta sul primo caso e, solo se `SPINTA` è uguale in tutti i casi, la classifica fra i casi; con `SPINTA` diversa le missioni sono diverse e non si classifica.
+
+Cartella CAD. A fine catena, e con `python run_sistema.py --solo cad` (non calcola nulla: ricostruisce dai file esistenti), i solidi sono raccolti in `risultati/<caso>/CAD/<variante>/` (`CAD/` senza varianti): `01_tubo.step`, `02_rotore.step`, `03_statore.step` (solo con statore), `04_assieme.step`, `speculari/` (versioni B), `stl/`, `solidworks/` (parti nominate, STEP AP214 e AP203, IGES) e `LEGGIMI.txt` in italiano (cosa è ogni file, mm, asse X lungo il flusso con x = 0 all'ingresso del condotto, quale aprire in SolidWorks e, se la variante è incompleta, perché e cosa manca). In una serie c'è anche `<serie>/CAD/INDICE.txt`. Sono copie: i file originali restano in `2_venturi/03_cad`, `3_ventola/03_cad`, `4_sistema/03_cad` e sono quelli letti da masse e Dinamica. Per risultati già calcolati o copiati altrove: `python strumenti/riesporta_cad.py <serie|caso|catena>` (stessa cosa, senza `input.py`). Il CAD della ventola di un progetto accettato si scrive sempre: se lo statore non si costruisce, il rotore resta e l'avviso è in `CAD_info.json` (`avvisi`); se il CAD manca la catena si ferma con un errore che dice cosa manca e perché, e `RIEPILOGO.md` lo riporta in testa.
 
 Come esempio di riepilogo vedi `risultati/RUN_POST_FIX_11-11/RIEPILOGO.md` (i numeri dipendono dal caso e dagli ingressi).
 
@@ -174,4 +177,5 @@ python -m pytest tests -q -p no:cacheprovider
 | `1_venturi/` | `venturi_designer` (solver del flusso, ottimizzazione, CAD), `run_venturi.py`, `tests`, `CLAUDE.md` (note di ripresa) |
 | `2_ventola/` | `ventola_designer` (BEMT, statore, ottimizzatore, CAD, indicatori), `docs/`, `tools/xfoil/`, `tests`, `README.md` proprio |
 | `3_sistema/` | `sistema_designer` (potenza di manovra, confronto statore, assieme, note), `tests` |
+| `strumenti/` | `riesporta_cad.py`: rigenera la cartella `CAD/` (con la versione per SolidWorks) da risultati già calcolati, senza ricalcolare |
 | `risultati/` | uscite di tutti i casi, fuori da git |

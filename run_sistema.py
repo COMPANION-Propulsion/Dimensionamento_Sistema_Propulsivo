@@ -15,6 +15,17 @@ Whole chain of the propulsion sizing, from input.py to risultati/<caso>/.
     python run_sistema.py --solo confronto   rewrite 5_confronto_statore/ only (no calculation
                                              of the chains)
     python run_sistema.py --solo riepilogo   rewrite RIEPILOGO.md only (no calculation)
+    python run_sistema.py --solo cad         rebuild the CAD/ folders (and the series index
+                                             CAD/INDICE.txt) from the existing files (no calculation)
+
+CAD folder. At the end of the chain (and with --solo cad, which calculates nothing) the CAD is
+collected in <case>/CAD/<variant>/ (<case>/CAD/ without variants): 01_tubo.step, 02_rotore.step,
+03_statore.step (with stator), 04_assieme.step, speculari/ (the B versions), stl/, solidworks/
+(parts with names, AP214 and AP203, IGES) and LEGGIMI.txt (what each file is, units, axis, which one
+to open and, if the variant is incomplete, why and what is missing). A series gets
+<series>/CAD/INDICE.txt. They are COPIES: the files the mass, band and assembly code read stay where
+they are (see 3_sistema/sistema_designer/cartella_cad.py). strumenti/riesporta_cad.py does the same
+for results that already exist.
 
 Each step writes only what is its own: what needs both duct and fan is in 4_sistema/.
 The fan input is written from VENTOLA of input.py into <chain>/input_ventola.json,
@@ -92,7 +103,7 @@ for folder in ("0_spinta", "1_venturi", "2_ventola", "3_sistema"):
     sys.path.insert(0, os.path.join(ROOT, folder))
 
 STEPS = ("spinta", "venturi", "ventola", "sistema")
-SOLO = STEPS + ("confronto", "riepilogo", "masse")
+SOLO = STEPS + ("confronto", "riepilogo", "masse", "cad")
 SECTIONS = ("SPINTA", "VENTURI", "VENTOLA", "SISTEMA")     # sections where "a; b" makes a series
 FAN_DEFAULTS = {
     "temperatura_K": 293.15, "mozzo_su_D": [0.15, 0.25],
@@ -109,6 +120,7 @@ SISTEMA_DEFAULTS = {"confronto_statore": False, "iterazioni_fascia": 3, "combina
                     "densita_kg_m3": 1240.0, "riempimento": 1.0, "processi": None,
                     "n_propulsori": None, "esponente_potenza_massa": 1.5}
 PARALLEL_SOLO = (None,) + STEPS[1:]      # --solo values whose chains / cases may run in parallel
+CAD_SOLO = (None, "ventola", "sistema", "cad")   # --solo values after which the CAD/ folder is rebuilt
 COMBINATIONS = ("tutte", "accoppiate")
 VARIANTS = (("Statore", True), ("NoStatore", False))
 
@@ -354,6 +366,32 @@ def write_series_masses(plan: dict, rows: list, sis: dict):
     except Exception as e:
         print(f"WARNING: confronto_casi.xlsx not written: {e}")
     return None
+
+
+def build_cad(root: str, solidworks: bool = True) -> None:
+    """<case>/CAD/ from the files that exist (no calculation); a warning, never an error."""
+    try:
+        from sistema_designer import cartella_cad
+        if not cartella_cad.case_chains(root):
+            print(f"WARNING: no chain to collect the CAD from in {root}.")
+            return
+        cartella_cad.build_case(root, solidworks, log=say)
+    except ImportError as e:
+        print(f"WARNING: CAD folder not written (sistema_designer.cartella_cad not available: {e}).")
+    except Exception as e:
+        print(f"WARNING: CAD folder of {root} not written: {e}")
+        traceback.print_exc()
+
+
+def write_series_cad_index(plan: dict) -> None:
+    """<series>/CAD/INDICE.txt of the cases that have a folder; a warning, never an error."""
+    try:
+        from sistema_designer import cartella_cad
+        cases = [c["folder"] for c in plan["cases"] if cartella_cad.case_chains(c["folder"])]
+        if cases:
+            print(f"CAD index of the series: {cartella_cad.write_series_index(plan['root'], cases)}")
+    except Exception as e:
+        print(f"WARNING: CAD index of the series not written: {e}")
 
 
 def say(text: str) -> None:
@@ -608,7 +646,7 @@ class FanFailed(RuntimeError):
     def __init__(self, why: str, dp: float, D: float, Q: float):
         super().__init__(f"{why} (D ventola {1e3 * D:.2f} mm, dp {dp:.1f} Pa, "
                          f"portata {1e3 * Q:.2f} L/s)")
-        self.dp, self.D, self.Q = dp, D, Q
+        self.why, self.dp, self.D, self.Q = why, dp, D, Q
 
 
 def max_fan_diameter(input_file: str, T: float) -> float:
@@ -629,6 +667,29 @@ def adaptive_diameters(D0: float, D_max: float, step_min: float = ADAPT_STEP_MIN
             out.append(D)
             last = D
     return out
+
+
+def cad_missing(rep: dict, stator_on: bool, why: str, dp: float, D: float, Q: float) -> Exception:
+    """The fan was accepted but its CAD is missing or incomplete: an explicit error.
+
+    The accepted design is not wrong for that, so it is not "non progettabile"; but the band
+    (and the assembly) cannot be computed without the CAD, so the pass fails. A CAD error that
+    can depend on the geometry (FanFailed) lets the adaptation of the fan diameter go on to the
+    next diameter; a missing cadquery (nothing to gain by trying again) does not."""
+    cad = (rep or {}).get("cad") or {}
+    cause = (cad.get("errore") or cad.get("status") or "; ".join(cad.get("avvisi") or [])
+             or why)
+    lost = ["ventola_A.step/.stl", "ventola_B_speculare.step/.stl"]
+    if stator_on:
+        lost += ["statore_A.step/.stl", "statore_B_speculare.step/.stl"]
+    text = (f"CAD DELLA VENTOLA MANCANTE: {cause}. Il progetto della ventola e accettato "
+            f"dall'ottimizzatore ma non si sono scritti {', '.join(lost)} (3_ventola/03_cad): "
+            "senza il CAD non si conosce l'ingombro per la fascia e non si costruisce l'assieme "
+            "(4_sistema/03_cad/assieme_*.step). Controllo che l'ha prodotto: "
+            "3_ventola/00_sintesi/report.json, campo cad")
+    if cad.get("status") and not cad.get("errore"):
+        return RuntimeError(text)
+    return FanFailed(text, dp, D, Q)
 
 
 def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, prev=None,
@@ -658,7 +719,10 @@ def fascia_pass(derived: str, folder: str, stator_on: bool, skip_extras: bool, p
     rep = _read_json(folder, "3_ventola", "00_sintesi", "report.json")
     if not rep or not rep.get("best"):
         raise FanFailed("the fan step found no accepted design", dp, D, Q)
-    need = band_need(rep, res, stator_on, os.path.join(folder, "3_ventola", "03_cad"))
+    try:
+        need = band_need(rep, res, stator_on, os.path.join(folder, "3_ventola", "03_cad"))
+    except ValueError as e:
+        raise cad_missing(rep, stator_on, str(e), dp, D, Q) from e
     return dict(skip_extras=skip_extras, ventola_riusata=reused, dp_Pa=dp,
                 L_tubo_mm=res["geometria"]["L_tubo_mm"], D_ventola_mm=1e3 * D,
                 monte_m=need["monte_m"], valle_m=need["valle_m"],
@@ -728,10 +792,10 @@ def fascia_loop(input_file: str, case_root: str, folder: str, label, stator, sis
                 "della catena")
             return row, res, rep
         raise RuntimeError(
-            f"ventola non progettabile nemmeno al diametro massimo ammesso dagli input: "
+            f"ventola non progettabile (o senza CAD) nemmeno al diametro massimo ammesso dagli input: "
             f"D = {1e3 * err.D:.2f} mm (massimo {1e3 * D_max:.2f} mm), dp = {err.dp:.1f} Pa, "
-            f"portata = {1e3 * err.Q:.2f} L/s. Rivedere VENTOLA (profili, pale, giri, mozzo) o "
-            "gli ingombri (D_ext_max, gap_parete).")
+            f"portata = {1e3 * err.Q:.2f} L/s. Ultimo motivo: {err.why}. Rivedere VENTOLA "
+            "(profili, pale, giri, mozzo) o gli ingombri (D_ext_max, gap_parete).")
 
     def record(row, upd, n, L_used):
         row.update(iterazione=n, L_disk_m=L_used, L_disk_nuovo_m=upd["L_disk_nuovo_m"],
@@ -840,6 +904,22 @@ def write_summary(input_file: str, results_dir=None) -> None:
     if sub:
         lines += ["Il confronto statore sì/no ha due catene complete: questo riepilogo descrive "
                   "quella **con statore** (`Statore/`); quella senza è in `NoStatore/`.", ""]
+    try:           # incomplete chains first: what is missing and why (never hidden by a good chain)
+        from sistema_designer import cartella_cad
+        for variant, chain_root in cartella_cad.case_chains(root):
+            st = cartella_cad.chain_state(chain_root, variant)
+            if not st["completa"]:
+                tag = f" ({variant})" if variant else ""
+                lines += [f"- **CATENA / CAD INCOMPLETO{tag}:** mancano "
+                          f"{', '.join(st['mancano'])}"] + [f"  - perché: {x}" for x in st["problemi"]]
+            lines += [f"  - avviso: {x}" for x in st["avvisi"]]
+        if os.path.isdir(os.path.join(root, "CAD")):
+            lines += ["- CAD con nomi chiari (tubo, rotore, statore, assieme, STL, versione per "
+                      "SolidWorks): cartella `CAD/`, spiegazione in `LEGGIMI.txt` di ogni variante"]
+        if lines[-1] != "":
+            lines.append("")
+    except Exception:
+        pass
     fascia = [r for r in (load("fascia.json") or []) if "errore" not in r]
     if fascia:
         last = fascia[-1]
@@ -1180,6 +1260,11 @@ def run_case(input_file: str, solo=None, results_dir=None, procs=None) -> int:
         write_masses(root, sis)
         print_decision(root)
         return 0
+    if solo == "cad":
+        root = caso.case_dir(input_file, results_dir)
+        build_cad(root)
+        write_summary(input_file, results_dir)
+        return 0
     if solo == "confronto":
         if not sis["confronto_statore"]:
             print("SISTEMA['confronto_statore'] is False: nothing to compare.")
@@ -1220,6 +1305,8 @@ def run_case(input_file: str, solo=None, results_dir=None, procs=None) -> int:
             run_confronto(root, sis)
         if args.solo in (None, "sistema"):
             write_masses(root, sis)
+        if args.solo in CAD_SOLO:
+            build_cad(root)        # also for a failed chain: LEGGIMI.txt says what is missing and why
         write_summary(args.input, results_dir)
         print_decision(root)
         ok = [rc for rc in results if rc in (0, 3)]
@@ -1279,6 +1366,8 @@ def run_series(input_file: str, plan: dict, solo=None, procs=None) -> int:
             say("\nSeries decision (mass -> power):")
             for x in dlines[:3]:
                 say("  " + x.lstrip("- ").replace("**", ""))
+    if solo in CAD_SOLO:
+        write_series_cad_index(plan)
     path = write_series_summary_md(plan, rows, dlines)
     print(f"\nSeries summary: {path}")
     ok = [r["rc"] for r in rows if r["rc"] in (0, 3)]
@@ -1302,7 +1391,8 @@ def main(argv=None) -> int:
     p.add_argument("--solo", choices=SOLO, default=None,
                    help="Run one step only (in every chain and every case, no band loop); "
                         "'confronto' rewrites 5_confronto_statore/, 'riepilogo' RIEPILOGO.md and "
-                        "'masse' the mass workbooks, all without calculating.")
+                        "'masse' the mass workbooks, 'cad' the CAD/ folders (and CAD/INDICE.txt of a "
+                        "series), all without calculating.")
     p.add_argument("--elenca", action="store_true",
                    help="Print the cases of the series (input values 'a; b') and their labels; run nothing.")
     p.add_argument("--input", default=INPUT_FILE, help="Input file (default: input.py).")
