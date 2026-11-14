@@ -58,20 +58,6 @@ R and f at frozen U, which needs no flow solution.
 The eddy viscosity nu_t is frozen in both: the algebraic model searches for
 a maximum along the wall normal, which is not differentiable. That is an
 approximation of the gradient, not of the flow.
-
-Linear solver
--------------
-Every linear system here (Newton steps and adjoint) is solved with PARDISO
-through `pypardiso` (python -m pip install pypardiso), always: no option, no
-fallback. Each `factorize` call makes its own PyPardisoSolver, factorises once
-(phase 12) and every `.solve` is a back-substitution (phase 33), so the
-adjoint's several right-hand sides share one factorisation. The transposed
-system J^T lam = df/dU uses the same factors with iparm(12) = 2, no second
-factorisation and no explicit transpose.
-
-Results equal the old SuperLU ones only within the solver tolerance, not bit
-for bit (different ordering and pivoting): compare thrust, flow rate,
-residual and adjoint gradients against a SuperLU run (benchmark_solutore.py).
 """
 
 from __future__ import annotations
@@ -83,12 +69,7 @@ from typing import Callable, Dict, Tuple
 
 import numpy as np
 import scipy.sparse as sp
-
-try:
-    from pypardiso import PyPardisoSolver
-except ImportError as exc:      # pragma: no cover
-    raise ImportError("the venturi flow solver needs the PARDISO solver: "
-                      "python -m pip install pypardiso") from exc
+import scipy.sparse.linalg as spla
 
 from ..core.propulsion import PropulsionCase, disk_force, thrust_from_fluxes
 from ..solver import inlet_profile, solve_fv
@@ -109,44 +90,6 @@ MAX_STEP = 0.2  # largest change of a scaled unknown in one Newton step
 FLAT_INLET = True  # uniform inlet profile (duct drawing still air); False = developed pipe profile
 
 _COLOURINGS: Dict[Tuple[int, int], tuple] = {}
-
-
-class _Factorization:
-    """LU of a sparse matrix by PARDISO: factorise once, solve many times."""
-
-    def __init__(self, A):
-        self._A = sp.csr_matrix(A)
-        self._solver = PyPardisoSolver()
-        self._solver.factorize(self._A)
-        self._At = None                         # A^T and its factors, made on the first "T" solve
-
-    def solve(self, rhs, trans: str = "N") -> np.ndarray:
-        rhs = np.asarray(rhs, dtype=float)
-        if trans != "T":
-            return np.asarray(self._solver.solve(self._A, rhs)).reshape(rhs.shape)
-        # Transposed system: its own factorisation of A^T (exact). The iparm(12) switch of
-        # PARDISO on the factors of A gave wrong solutions through pypardiso (14/11/2026 test).
-        if self._At is None:
-            self._At = sp.csr_matrix(self._A.T)
-            self._solver_t = PyPardisoSolver()
-            self._solver_t.factorize(self._At)
-        return np.asarray(self._solver_t.solve(self._At, rhs)).reshape(rhs.shape)
-
-    def __del__(self):
-        # PARDISO keeps the factors in MKL memory until it is told to free them: without this
-        # every Newton step leaked its LU (processes grew to ~10 GB on 14/11/2026).
-        for name in ("_solver", "_solver_t"):
-            s = getattr(self, name, None)
-            if s is not None:
-                try:
-                    s.free_memory(everything=True)
-                except Exception:
-                    pass
-
-
-def factorize(A) -> _Factorization:
-    """Factorisation of the sparse matrix A, with .solve(rhs, trans="N"|"T")."""
-    return _Factorization(A)
 
 
 class DuctSystem:
@@ -402,7 +345,7 @@ def solve_newton(sys_: DuctSystem, x: np.ndarray, tol: float = 1e-9, max_steps: 
             return x, norm, k, True
         if J is None:
             J = sys_.jacobian(x)
-        step = factorize(J - sigma * D).solve(-R)
+        step = spla.splu((J - sigma * D).tocsc()).solve(-R)
         step *= min(1.0, MAX_STEP / float(np.abs(step).max()))
         trial = x + step
         R_t = sys_.residual(trial)
@@ -521,7 +464,7 @@ def adjoint_gradients(sol: FlowSolution, functions: Dict[str, Callable],
     base = sol.system
     base.set_nu_t(sol.nu_t)
     x = sol.x
-    lu = factorize(base.jacobian(x))
+    lu = spla.splu(base.jacobian(x))
 
     lambdas = {}
     for name, f in functions.items():

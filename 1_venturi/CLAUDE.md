@@ -69,15 +69,6 @@ e senza un vincolo di lunghezza minima l'attrito spinge a accorciare. Atteso dal
 
 ## Scelte numeriche da non perdere
 
-- Solutore lineare: PARDISO tramite `pypardiso` (`python -m pip install pypardiso`), sempre, senza opzioni
-  né ripiego su SuperLU (`optimization/adjoint.factorize`: una fattorizzazione, tante sostituzioni; la
-  soluzione trasposta dell'adjoint fattorizza A^T a parte: il trucco iparm(12)=2 sugli stessi fattori,
-  attraverso pypardiso, dava soluzioni sbagliate nel test del 14/11/2026). I risultati coincidono con quelli
-  vecchi di SuperLU solo entro la tolleranza del solutore, non bit a bit: dopo l'installazione confrontare
-  prima/dopo (spinta, portata, residuo, gradienti adjoint, stessi casi convergenti) con lo script di
-  benchmark. Il percorso di Newton non è cambiato. L'adjoint non riusa la fattorizzazione dell'ultimo passo
-  di Newton: quella è di J - sigma*D, l'adjoint fattorizza J puro. `solver/projection.py` (marcia nel tempo)
-  usa ancora SuperLU per la Poisson della pressione.
 - Partenza a freddo: la marcia nel tempo tiene fissa la portata d'ingresso; da una portata troppo
   lontana Newton non converge. `START_FLOW = (0.85, 0.6, 0.45, 1.0)` della portata ideale, in ordine.
   Con 0.85 soltanto, il tubo dritto a R_int_max non convergeva.
