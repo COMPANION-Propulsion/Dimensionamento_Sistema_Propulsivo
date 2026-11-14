@@ -766,7 +766,7 @@ def write_summary(input_file: str, results_dir=None) -> None:
     if v:
         g, ve = v["geometria"], v["ventola"]
         lines += ["## 2. Condotto (`2_venturi/`, disco uniforme)", "",
-                  f"- **Δp disco {ve['dp_disk_Pa']:.3f} ± {ve['dp_errore_Pa']:.3f} Pa**, "
+                  f"- **Δp disco {ve['dp_disk_Pa']:.3f} ± {('n.d.' if ve.get('dp_errore_Pa') is None else format(ve['dp_errore_Pa'], '.3f'))} Pa**, "
                   f"portata {ve['portata_m3_s'] * 1e3:.3f} L/s, potenza all'aria "
                   f"{ve['potenza_fluido_W']:.4f} W",
                   f"- ventola Ø{ve['D_ventola_m'] * 1e3:.2f} mm; tubo "

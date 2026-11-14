@@ -23,6 +23,14 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+
+def _nd(x, fmt: str) -> str:
+    """x formatted, or "n.d." when it is missing (None/NaN): e.g. no grid study in an
+    intermediate band pass."""
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return "n.d."
+    return format(x, fmt)
+
 from ..core.config import VenturiConfig
 from ..geometry import MorphedGeometry
 from .cad_duct import export_duct_cad, sample, tube_pieces
@@ -342,7 +350,7 @@ def history_lines(history: Optional[Dict]) -> List[str]:
     return lines + [""]
 
 
-_BAND_METHOD = {"GCI": "GCI", "flat": "griglie coincidenti, 1.25 x dispersione",
+_BAND_METHOD = {"assente": "nessuno studio in questa passata", "GCI": "GCI", "flat": "griglie coincidenti, 1.25 x dispersione",
                 "oscillatory": "risultato oscillante, 1.25 x dispersione",
                 "reference order": "GCI con ordine di riferimento p = 1"}
 
@@ -368,7 +376,7 @@ def write_report(results: Dict, path: str, history: Optional[Dict] = None) -> st
         "# Venturi: dalla spinta al salto di pressione", "",
         "## Per la ventola", "",
         "| grandezza | valore |", "|---|---|",
-        f"| **Δp disco** | **{v['dp_disk_Pa']:.4f} ± {v['dp_errore_Pa']:.4f} Pa** |",
+        f"| **Δp disco** | **{v['dp_disk_Pa']:.4f} ± {_nd(v['dp_errore_Pa'], '.4f')} Pa** |",
         f"| diametro ventola | {v['D_ventola_m'] * 1e3:.2f} mm |",
         f"| centro ventola da ingresso condotto | {v['z_centro_ventola_m'] * 1e3:.2f} mm |",
         f"| spessore assiale ventola | {v['L_ventola_m'] * 1e3:.2f} mm |",
@@ -385,8 +393,8 @@ def write_report(results: Dict, path: str, history: Optional[Dict] = None) -> st
         f"- β = spinta / (ṁ v_media,uscita) = {s['beta_spinta_su_mdot_v']:.3f} "
         f"(1 = getto uniforme; > 1 profilo non uniforme)",
         f"- errore di griglia ({_BAND_METHOD.get(s.get('metodo_banda_griglia', 'GCI'), 'GCI')}): "
-        f"±{s['errore_griglia_N']:.4g} N "
-        f"({s['errore_griglia_pct']:.2f} %), estrapolata {s['estrapolata_N']:.5g} N"
+        f"±{_nd(s['errore_griglia_N'], '.4g')} N "
+        f"({_nd(s['errore_griglia_pct'], '.2f')} %), estrapolata {_nd(s['estrapolata_N'], '.5g')} N"
         + (f"; nota: {s['note_griglia']}" if s.get("note_griglia", "-") != "-" else ""),
         f"- spinta / potenza: {s['spinta_su_potenza_N_W']:.4f} N/W", "",
         "## Geometria", "",
